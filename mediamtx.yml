@@ -18,3 +18,6 @@ paths:
   "live/player13": { source: publisher }
   "live/player14": { source: publisher }
   "live/player15": { source: publisher }
+  "live/player17": { source: publisher }
+  # 监视器 B站预览管线 (正则匹配 live/monitor_数字)
+  "~live/monitor_\\d+$": { source: publisher }
