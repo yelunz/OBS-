@@ -1507,7 +1507,7 @@ class ManagerApp:
             if player in self.active_players:
                 return
             self.active_players.append(player)
-        player["active"] = False
+        player["active"] = True
         if player["platform"] in ("bilibili", "douyin", "custom_web", "twitch"):
             self.sync_player(player)
         self.save_config()
