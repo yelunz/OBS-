@@ -891,7 +891,7 @@ class MonitorWindow:
             log("系统", f"[监视器-B站-失败] {name} 没有 browser_url")
             return
 
-        stream_name = f"monitor_{player['id']}"
+        stream_name = player.get("stream_name", f"player{player['id']}")
         rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
         log("系统", f"[监视器-B站-步骤2] URL={url}, RTMP={rtmp_url}")
 
