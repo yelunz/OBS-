@@ -1,0 +1,19 @@
+rtmpAddress: :1935
+hlsAddress: :8888
+hlsSegmentDuration: 1s
+hlsSegmentCount: 7
+paths:
+  "live/player1": { source: publisher }
+  "live/player2": { source: publisher }
+  "live/player3": { source: publisher }
+  "live/player4": { source: publisher }
+  "live/player5": { source: publisher }
+  "live/player6": { source: publisher }
+  "live/player7": { source: publisher }
+  "live/player8": { source: publisher }
+  "live/player9": { source: publisher }
+  "live/player10": { source: publisher }
+  "live/player11": { source: publisher }
+  "live/player12": { source: publisher }
+  "live/player13": { source: publisher }
+  "live/player14": { source: publisher }

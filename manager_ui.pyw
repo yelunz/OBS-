@@ -1,0 +1,2043 @@
+import json, os, subprocess, sys, time, threading, socket, collections, re, shutil, webbrowser
+import tkinter as tk
+from tkinter import ttk, messagebox, Menu, scrolledtext
+from obswebsocket import obsws, requests
+import psutil
+from pynput import mouse, keyboard
+import ctypes
+from ctypes import wintypes
+
+# ==================== VLC 模块检测 ====================
+VLC_AVAILABLE = False
+try:
+    import vlc
+    VLC_AVAILABLE = True
+except Exception:
+    pass
+
+# ==================== 窗口操作模块 ====================
+GW_AVAILABLE = False
+try:
+    import pygetwindow as gw
+    GW_AVAILABLE = True
+except:
+    pass
+
+# ==================== 每次启动清空日志 ====================
+LOG_FILE = os.path.join(r"C:\myobs", "debug.log")
+try:
+    open(LOG_FILE, "w").close()
+except:
+    pass
+
+_log_file_lock = threading.Lock()
+
+def file_log(msg):
+    try:
+        with _log_file_lock:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+    except:
+        pass
+
+# ==================== 全局日志更新标记 ====================
+_log_update_flag = False
+player_logs = {}
+
+def log(player_name, msg):
+    global _log_update_flag
+    if player_name not in player_logs:
+        player_logs[player_name] = collections.deque(maxlen=500)
+    timestamp = time.strftime("%H:%M:%S")
+    line = f"[{timestamp}] {msg}"
+    player_logs[player_name].append(line)
+    _log_update_flag = True
+    file_log(f"[{player_name}] {msg}")
+
+# ==================== OBS 控制 ====================
+class OBSController:
+    def __init__(self, host, port, password):
+        self.host = host
+        self.port = port
+        self.password = password
+        self.ws = None
+        self.connected = False
+        self.scene_name = None
+
+    def connect(self):
+        try:
+            self.ws = obsws(self.host, self.port, self.password)
+            self.ws.connect()
+            self.connected = True
+            self.scene_name = self.ws.call(requests.GetCurrentProgramScene()).getSceneName()
+            log("系统", "OBS 连接成功")
+            return True, ""
+        except Exception as e:
+            self.connected = False
+            log("系统", f"OBS 连接失败: {e}")
+            return False, str(e)
+
+    def disconnect(self):
+        if self.ws:
+            self.ws.disconnect()
+            self.connected = False
+
+    def source_exists(self, name):
+        items = self.ws.call(requests.GetSceneItemList(sceneName=self.scene_name)).getSceneItems()
+        return any(i["sourceName"] == name for i in items)
+
+    def create_vlc(self, name, url):
+        log("系统", f"创建 VLC 源: {name} URL: {url}")
+        playlist = [{"value": url, "hidden": False}]
+        settings = {
+            "playlist": playlist,
+            "loop": True,
+            "shuffle": False,
+            "network_caching": 400,
+            "playback_behavior": "always_play"
+        }
+        try:
+            self.ws.call(requests.CreateInput(
+                sceneName=self.scene_name,
+                inputName=name,
+                inputKind="vlc_source",
+                inputSettings=settings,
+                sceneItemEnabled=False
+            ))
+            log("系统", f"CreateInput 成功: {name}")
+        except Exception as e:
+            log("系统", f"CreateInput 失败: {name} - {e}")
+            return
+        try:
+            self.ws.call(requests.SetInputSettings(
+                inputName=name,
+                inputSettings={"playback_behavior": "always_play"},
+                overlay=True
+            ))
+            log("系统", f"SetInputSettings (always_play) 成功: {name}")
+        except Exception as e:
+            log("系统", f"SetInputSettings 失败: {name} - {e}")
+        self.ws.call(requests.SetInputMute(inputName=name, inputMuted=True))
+        self.set_visibility(name, False)
+        log("系统", f"VLC 源 {name} 已静音并隐藏")
+
+    def update_vlc_url(self, name, url):
+        log("系统", f"刷新 OBS 源: {name} 新 URL: {url}")
+        try:
+            cur = self.ws.call(requests.GetInputSettings(inputName=name)).getInputSettings()
+            cur["playlist"] = [{"value": url, "hidden": False}]
+            cur["playback_behavior"] = "always_play"
+            self.ws.call(requests.SetInputSettings(inputName=name, inputSettings=cur, overlay=True))
+            log("系统", f"刷新成功: {name}")
+        except Exception as e:
+            log("系统", f"刷新失败: {name} - {e}")
+
+    def restart_vlc(self, name):
+        try:
+            self.ws.call(requests.TriggerMediaInputAction(
+                inputName=name,
+                mediaAction="OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
+            ))
+            log("系统", f"强制重启源成功: {name}")
+            return True
+        except Exception as e:
+            log("系统", f"强制重启失败: {name} - {e}")
+            return False
+
+    def create_window_capture(self, name, window_title=""):
+        settings = {
+            "window": window_title,
+            "capture_mode": "window",
+            "priority": "title",
+            "capture_audio": True
+        }
+        log("系统", f"创建窗口采集源: {name} 匹配窗口: '{window_title}'")
+        try:
+            self.ws.call(requests.CreateInput(
+                sceneName=self.scene_name,
+                inputName=name,
+                inputKind="window_capture",
+                inputSettings=settings,
+                sceneItemEnabled=False
+            ))
+            self.ws.call(requests.SetInputAudioMonitorType(inputName=name, monitorType="none"))
+            log("系统", f"窗口采集源创建成功: {name}")
+        except Exception as e:
+            log("系统", f"窗口采集源创建失败: {name} - {e}")
+
+    def remove_source(self, name):
+        try:
+            self.ws.call(requests.RemoveInput(inputName=name))
+            log("系统", f"删除源成功: {name}")
+        except Exception as e:
+            log("系统", f"删除源失败: {name} - {e}")
+
+    def get_scene_item_map(self):
+        items = self.ws.call(requests.GetSceneItemList(sceneName=self.scene_name)).getSceneItems()
+        return {item["sourceName"]: {"id": item["sceneItemId"], "enabled": item["sceneItemEnabled"]} for item in items}
+
+    def get_visible(self, name):
+        m = self.get_scene_item_map()
+        return m.get(name, {}).get("enabled", False)
+
+    def set_visibility(self, name, visible):
+        m = self.get_scene_item_map()
+        if name in m:
+            self.ws.call(requests.SetSceneItemEnabled(
+                sceneName=self.scene_name,
+                sceneItemId=m[name]["id"],
+                sceneItemEnabled=visible
+            ))
+
+    def set_mute(self, source_name, mute):
+        try:
+            self.ws.call(requests.SetInputMute(inputName=source_name, inputMuted=mute))
+        except:
+            pass
+
+    def rename_source(self, old_name, new_name):
+        try:
+            self.ws.call(requests.SetInputName(inputName=old_name, newInputName=new_name))
+            log("系统", f"重命名源: {old_name} -> {new_name}")
+            return True
+        except Exception as e:
+            log("系统", f"重命名失败: {old_name} -> {new_name} - {e}")
+            return False
+
+    def get_all_source_names(self):
+        return list(self.get_scene_item_map().keys())
+
+    def create_scene(self, name):
+        try:
+            self.ws.call(requests.CreateScene(sceneName=name))
+            return True
+        except:
+            return False
+
+    def remove_scene(self, name):
+        try:
+            self.ws.call(requests.RemoveScene(sceneName=name))
+            return True
+        except:
+            return False
+
+    def switch_scene(self, name):
+        self.ws.call(requests.SetCurrentProgramScene(sceneName=name))
+        self.scene_name = name
+
+    def scene_exists(self, name):
+        scenes = self.ws.call(requests.GetSceneList()).getScenes()
+        return any(s["sceneName"] == name for s in scenes)
+
+# ==================== 基础配置 ====================
+BASE_DIR = r"C:\myobs"
+CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+MEDIAMTX_EXE = os.path.join(BASE_DIR, "mediamtx.exe")
+FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
+FFPROBE = r"C:\ffmpeg\bin\ffprobe.exe"
+mediamtx_proc = None
+AUTO_DETECT_INTERVAL = 120
+DEDICATED_SCENE = "多视角切换"
+DEFAULT_MAX_STREAMS = 6
+DEFAULT_HOTKEY_MODIFIERS = "alt+shift"
+
+# ==================== 网页静音函数 ====================
+def mute_browser_window(window_title, mute=True):
+    """模拟 Ctrl+M 静音/取消静音浏览器窗口"""
+    if not GW_AVAILABLE:
+        log("系统", "pygetwindow 未安装，无法静音浏览器窗口")
+        return
+    try:
+        windows = gw.getWindowsWithTitle(window_title)
+        if not windows:
+            log("系统", f"未找到窗口: {window_title}")
+            return
+        win = windows[0]
+        prev_hwnd = ctypes.windll.user32.GetForegroundWindow()
+        ctypes.windll.user32.SetForegroundWindow(win._hWnd)
+        time.sleep(0.1)
+        kb = keyboard.Controller()
+        kb.press(keyboard.Key.ctrl)
+        kb.press('m')
+        kb.release('m')
+        kb.release(keyboard.Key.ctrl)
+        time.sleep(0.1)
+        if prev_hwnd:
+            ctypes.windll.user32.SetForegroundWindow(prev_hwnd)
+        action = "静音" if mute else "取消静音"
+        log("系统", f"已对窗口 {window_title} 执行{action}")
+    except Exception as e:
+        log("系统", f"静音操作失败: {e}")
+
+# ==================== 进程管理 ====================
+def read_stream_output(proc, prefix, player_name, obs_ref=None, stream_name=None):
+    triggered = False
+    def reader():
+        nonlocal triggered
+        try:
+            for line in iter(proc.stdout.readline, b''):
+                decoded = line.decode('utf-8', errors='replace').strip()
+                if decoded:
+                    log(player_name, f"{prefix}{decoded}")
+                    if not triggered and "Output #0, flv, to '" in decoded:
+                        triggered = True
+                        log("系统", f"[刷新触发] 在 {player_name} 的输出中检测到流已开始推送")
+                        if obs_ref:
+                            found = False
+                            for p in app.active_players:
+                                if p.get("stream_name") == stream_name:
+                                    src = p.get("obs_source_name")
+                                    if src:
+                                        log("系统", f"[刷新] 找到匹配选手 {p['name']}，源名称: {src}")
+                                        log("系统", f"[刷新] 等待 2 秒后尝试重启源 {src}")
+                                        time.sleep(2)
+                                        log("系统", f"[刷新] 第一次尝试 update_vlc_url")
+                                        obs_ref.update_vlc_url(src, f"rtmp://localhost:1935/live/{stream_name}")
+                                        time.sleep(1)
+                                        log("系统", f"[刷新] 第二次尝试 restart_vlc")
+                                        if obs_ref.restart_vlc(src):
+                                            log("系统", f"[刷新] 重启命令已发送")
+                                        else:
+                                            log("系统", f"[刷新] 重启命令失败")
+                                    else:
+                                        log("系统", f"[刷新] 选手 {p['name']} 的 obs_source_name 为空")
+                                    found = True
+                                    break
+                            if not found:
+                                log("系统", f"[刷新] 未找到 stream_name={stream_name} 的活跃选手")
+        except:
+            pass
+    threading.Thread(target=reader, daemon=True).start()
+
+def wait_for_mediamtx(host='localhost', port=1935, timeout=10):
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            s = socket.create_connection((host, port), timeout=1)
+            s.close()
+            return True
+        except:
+            time.sleep(0.5)
+    return False
+
+def start_stream(player, obs=None):
+    pid = player["id"]
+    sn = player.get("stream_name", f"player{pid}")
+    rtmp = f"rtmp://localhost:1935/live/{sn}"
+    plat = player.get("platform")
+    qual = player.get("quality", "best")
+    name = player["name"]
+
+    global mediamtx_proc
+    if not mediamtx_proc or mediamtx_proc.poll() is not None:
+        start_mediamtx()
+    wait_for_mediamtx()
+
+    if plat == "twitch":
+        twitch_input = player.get("twitch_url", "") or player.get("channel", "")
+        if not twitch_input:
+            return False
+        if not twitch_input.startswith("http"):
+            twitch_input = f"https://www.twitch.tv/{twitch_input}"
+        cmd1 = ["streamlink", twitch_input, qual, "--retry-max", "5", "--retry-streams", "5", "-O"]
+        cmd2 = [FFMPEG, "-re", "-i", "pipe:0", "-c", "copy", "-f", "flv", rtmp]
+        p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+        p2 = subprocess.Popen(cmd2, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+        p1.stdout.close()
+        player["stream_pid"] = p2.pid
+        read_stream_output(p2, "", name, obs, sn)
+    elif plat == "douyin":
+        du = player.get("douyin_url", "")
+        if not du:
+            return False
+        cmd = [FFMPEG, "-user_agent", "Mozilla/5.0", "-i", du, "-c", "copy", "-f", "flv", rtmp]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+        player["stream_pid"] = p.pid
+        read_stream_output(p, "", name, obs, sn)
+    else:
+        return False
+
+    return True
+
+def stop_stream(player):
+    if player.get("stream_pid"):
+        try:
+            psutil.Process(player["stream_pid"]).terminate()
+        except:
+            pass
+        player["stream_pid"] = None
+
+def open_browser_window(player):
+    name = player.get("name", "未知")
+    url = player.get("browser_url", "")
+
+    log("系统", f"[新增桌面-步骤0] 开始为选手 {name} 执行新桌面创建流程")
+    log("系统", f"[新增桌面-步骤0] 平台={player['platform']}, URL={url}")
+
+    if not url:
+        log("系统", f"[新增桌面-步骤0-失败] 选手 {name} 没有有效的 URL，流程终止")
+        return
+
+    window_name = f"OBS_Window_{name}"
+    log("系统", f"[新增桌面-步骤0] 目标窗口标题: {window_name}")
+
+    kbd = keyboard.Controller()
+
+    # 步骤1: 创建新桌面 (Win+Ctrl+D)，系统会自动切换到新桌面
+    log("系统", f"[新增桌面-步骤1] 模拟 Win+Ctrl+D 创建新桌面...")
+    try:
+        kbd.press(keyboard.Key.cmd)
+        kbd.press(keyboard.Key.ctrl)
+        kbd.press('d')
+        kbd.release('d')
+        kbd.release(keyboard.Key.ctrl)
+        kbd.release(keyboard.Key.cmd)
+        log("系统", f"[新增桌面-步骤1-完成] 新桌面已创建，当前应已切换到新桌面")
+    except Exception as e:
+        log("系统", f"[新增桌面-步骤1-失败] 创建新桌面时出错: {e}")
+
+    log("系统", f"[新增桌面-步骤1] 等待 0.5 秒让桌面切换生效...")
+    time.sleep(0.5)
+
+    # 步骤2: 在新桌面中打开浏览器
+    log("系统", f"[新增桌面-步骤2] 在新桌面中启动 Edge 浏览器: {url}")
+    try:
+        subprocess.Popen(
+            ["start", "msedge", "--new-window", f"--window-name={window_name}", url],
+            shell=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        log("系统", f"[新增桌面-步骤2-完成] 浏览器窗口已启动: {window_name}")
+    except Exception as e:
+        log("系统", f"[新增桌面-步骤2-失败] 启动浏览器时出错: {e}")
+        log("系统", f"[新增桌面-步骤2-失败] 流程终止，请手动检查")
+        return
+
+    log("系统", f"[新增桌面-步骤2] 等待 3 秒让浏览器完全加载...")
+    time.sleep(3)
+
+    # 步骤3: 切回原桌面 (Win+Ctrl+Left)
+    log("系统", f"[新增桌面-步骤3] 模拟 Win+Ctrl+Left 切回主桌面...")
+    try:
+        kbd.press(keyboard.Key.cmd)
+        kbd.press(keyboard.Key.ctrl)
+        kbd.press(keyboard.Key.left)
+        kbd.release(keyboard.Key.left)
+        kbd.release(keyboard.Key.ctrl)
+        kbd.release(keyboard.Key.cmd)
+        log("系统", f"[新增桌面-步骤3-完成] 已切回主桌面")
+    except Exception as e:
+        log("系统", f"[新增桌面-步骤3-失败] 切回主桌面时出错: {e}")
+
+    log("系统", f"[新增桌面-完成] 选手 {name} 的新桌面创建流程结束")
+
+def check_twitch_source(url):
+    try:
+        p = subprocess.run(f'streamlink {url} best --retry-max 0 --stream-url', shell=True, capture_output=True, timeout=10)
+        return p.returncode == 0 and p.stdout.strip() != b""
+    except:
+        return False
+
+def check_douyin_source(url):
+    try:
+        p = subprocess.run(f'"{FFPROBE}" -v quiet -print_format json -show_streams "{url}"', shell=True, capture_output=True, timeout=10)
+        import json as j
+        data = j.loads(p.stdout)
+        return bool(data.get("streams"))
+    except:
+        return False
+
+def check_source(player):
+    plat = player["platform"]
+    if plat == "twitch":
+        url = player.get("twitch_url", "") or f"https://www.twitch.tv/{player.get('channel', '')}"
+        if not url:
+            return
+        ok = check_twitch_source(url)
+        player["source_ok"] = ok
+    elif plat == "douyin":
+        du = player.get("douyin_url", "")
+        if not du:
+            return
+        ok = check_douyin_source(du)
+        player["source_ok"] = ok
+
+def start_mediamtx():
+    global mediamtx_proc
+    if mediamtx_proc and mediamtx_proc.poll() is None:
+        return
+    yml_path = os.path.join(BASE_DIR, "mediamtx.yml")
+    paths = {}
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        for p in cfg.get("players", []):
+            pid = p.get("id", 0)
+            if pid:
+                paths[f"live/player{pid}"] = {"source": "publisher"}
+    except:
+        pass
+    if not paths:
+        for i in range(1, 10):
+            paths[f"live/player{i}"] = {"source": "publisher"}
+    yml = "rtmpAddress: :1935\nhlsAddress: :8888\nhlsSegmentDuration: 1s\nhlsSegmentCount: 7\npaths:\n"
+    for k, v in paths.items():
+        yml += f'  "{k}": {{ source: publisher }}\n'
+    with open(yml_path, "w", encoding="utf-8") as f:
+        f.write(yml)
+    proc = subprocess.Popen([MEDIAMTX_EXE], cwd=BASE_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+    mediamtx_proc = proc
+    read_stream_output(proc, "[MediaMTX] ", "MediaMTX")
+
+def stop_mediamtx():
+    global mediamtx_proc
+    if mediamtx_proc and mediamtx_proc.poll() is None:
+        mediamtx_proc.terminate()
+        mediamtx_proc = None
+
+def start_switcher():
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, os.path.join(BASE_DIR, "switcher.py")],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=BASE_DIR,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        read_stream_output(proc, "[切换器] ", "Switcher")
+        time.sleep(1)
+        if proc.poll() is not None:
+            log("系统", "警告: switcher.py 进程启动后立即退出")
+        return proc
+    except Exception as e:
+        log("系统", f"启动 switcher.py 失败: {e}")
+        return None
+
+def get_all_stream_statuses(players):
+    active = {}
+    for p in players:
+        if p.get("active") and p["platform"] in ("twitch", "douyin"):
+            pid = p.get("stream_pid")
+            active[p["name"]] = pid and psutil.pid_exists(pid)
+    return active
+
+# ==================== 快速添加 ====================
+def parse_clipboard_url(url_string):
+    clip = url_string.strip()
+    if not clip:
+        return None
+    douyin_stream_match = re.search(r'https?://(?:pull-flv-[a-z0-9]+\.douyincdn\.com|[\w-]+\.douyinliving\.com)/\S+', clip)
+    if douyin_stream_match:
+        return {"platform": "douyin", "douyin_url": douyin_stream_match.group(0), "name": "抖音选手", "hotkey": ""}
+    douyin_match = re.search(r'(https?://(?:live\.douyin|lv\.douyin)\.com/\S+)|(https?://v\.douyin\.com/\S+)', clip)
+    if douyin_match:
+        url = douyin_match.group(0)
+        try:
+            proc = subprocess.run(f'streamlink {url} best --stream-url', shell=True, capture_output=True, timeout=15, text=True)
+            if proc.returncode == 0 and proc.stdout.strip():
+                return {"platform": "douyin", "douyin_url": proc.stdout.strip(), "name": "抖音选手", "hotkey": ""}
+        except:
+            pass
+        return None
+    bili_match = re.search(r'live\.bilibili\.com/(\d+)', clip)
+    if bili_match:
+        rid = bili_match.group(1)
+        clean_url = f"https://live.bilibili.com/{rid}"
+        return {"platform": "bilibili", "room_id": rid, "browser_url": clean_url, "name": f"B站{rid}", "hotkey": ""}
+    twitch_match = re.search(r'twitch\.tv/([\w-]+)', clip)
+    if twitch_match:
+        ch = twitch_match.group(1)
+        return {"platform": "twitch", "twitch_url": f"https://www.twitch.tv/{ch}", "name": ch, "hotkey": ""}
+    if clip.startswith("http"):
+        return {"platform": "custom_web", "browser_url": clip, "name": "自定义网页", "hotkey": ""}
+    return None
+
+def get_next_view_label(players):
+    existing = set()
+    for p in players:
+        vl = p.get("view_label", 0)
+        if isinstance(vl, int):
+            existing.add(vl)
+        elif isinstance(vl, str) and vl.isdigit():
+            existing.add(int(vl))
+    for i in range(1, 1000):
+        if i not in existing:
+            return i
+    return None
+
+def normalize_view_label(value):
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return 0
+
+# ==================== 编辑对话框 ====================
+class PlayerDialog:
+    def __init__(self, parent, players, current_player=None, prefill=None):
+        self.top = tk.Toplevel(parent)
+        self.top.title("编辑选手" if current_player else "添加选手")
+        self.result = None
+        self.players = players
+        self.current_player = current_player
+        if prefill and not current_player:
+            name = prefill.get("name", "")
+            plat = prefill.get("platform", "bilibili")
+            room_id = prefill.get("room_id", "")
+            twitch_url = prefill.get("twitch_url", "")
+            douyin_url = prefill.get("douyin_url", "")
+            browser_url = prefill.get("browser_url", "")
+        elif current_player:
+            name = current_player["name"]
+            plat = current_player["platform"]
+            room_id = current_player.get("room_id", "")
+            twitch_url = current_player.get("twitch_url", "") or current_player.get("channel", "")
+            douyin_url = current_player.get("douyin_url", "")
+            browser_url = current_player.get("browser_url", "")
+        else:
+            name = ""
+            plat = "bilibili"
+            room_id = ""
+            twitch_url = ""
+            douyin_url = ""
+            browser_url = ""
+        self.name_var = tk.StringVar(value=name)
+        self.plat_var = tk.StringVar(value=plat)
+        self.hotkey_var = tk.StringVar(value=current_player["hotkey"] if current_player else "")
+        self.room_var = tk.StringVar(value=room_id)
+        self.twitch_var = tk.StringVar(value=twitch_url)
+        self.douyin_var = tk.StringVar(value=douyin_url)
+        self.qual_var = tk.StringVar(value=current_player.get("quality", "best") if current_player else "best")
+        self.url_var = tk.StringVar(value=browser_url)
+        ttk.Label(self.top, text="显示名称:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        ttk.Entry(self.top, textvariable=self.name_var, width=20).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Label(self.top, text="快捷键 (单字符):").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+        ttk.Entry(self.top, textvariable=self.hotkey_var, width=10).grid(row=1, column=1, padx=5, pady=5)
+        ttk.Label(self.top, text="平台:").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
+        combo = ttk.Combobox(self.top, textvariable=self.plat_var, values=["bilibili", "twitch", "douyin", "custom_web"], state="readonly")
+        combo.grid(row=2, column=1, padx=5, pady=5, sticky=tk.W)
+        combo.bind("<<ComboboxSelected>>", self.on_plat)
+        self.frame = ttk.Frame(self.top)
+        self.frame.grid(row=3, column=0, columnspan=2, sticky=tk.W)
+        self.on_plat()
+        ttk.Label(self.top, text="清晰度 (推流):").grid(row=4, column=0, padx=5, pady=5, sticky=tk.W)
+        ttk.Combobox(self.top, textvariable=self.qual_var, values=["best", "worst", "720p60", "480p", "360p"], state="readonly").grid(row=4, column=1, padx=5, pady=5, sticky=tk.W)
+        ttk.Button(self.top, text="确定", command=self.ok).grid(row=5, column=0, columnspan=2, pady=10)
+
+    def on_plat(self, event=None):
+        for w in self.frame.winfo_children():
+            w.destroy()
+        p = self.plat_var.get()
+        if p in ("bilibili", "custom_web"):
+            ttk.Label(self.frame, text="房间号 (选填):").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+            ttk.Entry(self.frame, textvariable=self.room_var, width=20).grid(row=0, column=1, padx=5, pady=5)
+            ttk.Label(self.frame, text="完整URL:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+            ttk.Entry(self.frame, textvariable=self.url_var, width=50).grid(row=1, column=1, padx=5, pady=5)
+        elif p == "twitch":
+            ttk.Label(self.frame, text="频道名或完整URL:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+            ttk.Entry(self.frame, textvariable=self.twitch_var, width=50).grid(row=0, column=1, padx=5, pady=5)
+        elif p == "douyin":
+            ttk.Label(self.frame, text="拉流链接:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+            ttk.Entry(self.frame, textvariable=self.douyin_var, width=50).grid(row=0, column=1, padx=5, pady=5)
+
+    def ok(self):
+        hotkey = self.hotkey_var.get().strip()
+        if not self.name_var.get().strip() or not hotkey:
+            messagebox.showwarning("错误", "请填写名称和快捷键", parent=self.top)
+            return
+        if len(hotkey) != 1 or not hotkey.isalnum():
+            messagebox.showwarning("错误", "快捷键只能是单个字母或数字", parent=self.top)
+            return
+        for p in self.players:
+            if p is self.current_player:
+                continue
+            if p.get("hotkey") == hotkey:
+                messagebox.showwarning("错误", f"快捷键已被 {p['name']} 占用", parent=self.top)
+                return
+        self.result = {
+            "name": self.name_var.get().strip(),
+            "hotkey": hotkey,
+            "platform": self.plat_var.get(),
+            "room_id": self.room_var.get().strip(),
+            "twitch_url": self.twitch_var.get().strip() if self.plat_var.get() == "twitch" else "",
+            "douyin_url": self.douyin_var.get().strip() if self.plat_var.get() == "douyin" else "",
+            "quality": self.qual_var.get(),
+            "browser_url": self.url_var.get().strip() if self.plat_var.get() in ("bilibili", "custom_web") else ""
+        }
+        self.top.destroy()
+
+# ==================== OBS 登录框 ====================
+class OBSLoginDialog:
+    def __init__(self, parent, host="localhost", port=4455, password=""):
+        self.top = tk.Toplevel(parent)
+        self.top.title("配置 OBS 连接")
+        self.top.resizable(False, False)
+        self.result = None
+        ttk.Label(self.top, text="请填写 OBS WebSocket 服务器信息：", font=("微软雅黑", 10)).grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 5))
+        ttk.Label(self.top, text="主机:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+        self.host_var = tk.StringVar(value=host)
+        ttk.Entry(self.top, textvariable=self.host_var, width=20).grid(row=1, column=1, padx=5, pady=5)
+        ttk.Label(self.top, text="端口:").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
+        self.port_var = tk.IntVar(value=port)
+        ttk.Entry(self.top, textvariable=self.port_var, width=20).grid(row=2, column=1, padx=5, pady=5)
+        ttk.Label(self.top, text="密码:").grid(row=3, column=0, padx=5, pady=5, sticky=tk.W)
+        self.pwd_var = tk.StringVar(value=password)
+        ttk.Entry(self.top, textvariable=self.pwd_var, width=20, show="*").grid(row=3, column=1, padx=5, pady=5)
+        btn_frame = ttk.Frame(self.top)
+        btn_frame.grid(row=4, column=0, columnspan=2, pady=15)
+        ttk.Button(btn_frame, text="连接", command=self.ok).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_frame, text="取消", command=self.top.destroy).pack(side=tk.LEFT, padx=10)
+        self.top.grab_set()
+        parent.wait_window(self.top)
+
+    def ok(self):
+        host = self.host_var.get().strip()
+        try:
+            port = int(self.port_var.get())
+        except:
+            messagebox.showwarning("错误", "端口必须是数字", parent=self.top)
+            return
+        if not host:
+            messagebox.showwarning("错误", "主机不能为空", parent=self.top)
+            return
+        self.result = (host, port, self.pwd_var.get())
+        self.top.destroy()
+
+# ==================== 监视器窗口 ====================
+class MonitorWindow:
+    def __init__(self, parent_app):
+        self.app = parent_app
+        self.win = tk.Toplevel(parent_app.root)
+        self.win.title("多视角监控")
+        self.win.geometry("960x600")
+        self.win.minsize(400, 300)
+        self.win.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.players = []
+        self.grid_widgets = {}
+        self.vlc_instances = {}
+        self.paused_players = {}
+        self.vlc_instance = None
+        self.mouse_listener = None
+        self.columns = 3
+        self.cell_width = 300
+        self.cell_height = 200
+        self.empty_label = None
+
+        if VLC_AVAILABLE:
+            try:
+                self.vlc_instance = vlc.Instance("--no-audio", "--intf", "dummy", "--vout", "directx")
+            except:
+                self.vlc_instance = None
+
+        toolbar = ttk.Frame(self.win)
+        toolbar.pack(fill=tk.X, side=tk.TOP, pady=2)
+        ttk.Button(toolbar, text="🔄 刷新所有", command=self.refresh_all).pack(side=tk.LEFT, padx=5)
+
+        self.container = ttk.Frame(self.win)
+        self.container.pack(fill=tk.BOTH, expand=True)
+        self.empty_label = tk.Label(self.container, text="暂无推流", font=("微软雅黑", 16), fg="gray")
+        self._start_mouse_listener()
+        self.win.bind("<Configure>", self._on_resize)
+        self.after_id = None
+        self.refresh()
+
+    def _on_resize(self, event):
+        if self.after_id:
+            self.win.after_cancel(self.after_id)
+        self.after_id = self.win.after(100, self.refresh)
+
+    def _calculate_layout(self):
+        n = len(self.players)
+        if n == 0:
+            return 1, 100, 100
+        width = self.container.winfo_width() - 20
+        height = self.container.winfo_height() - 20
+        if width < 100 or height < 100:
+            width, height = 960, 600
+        best_cols = 1
+        best_area = 0
+        for cols in range(1, n + 1):
+            rows = (n + cols - 1) // cols
+            cell_w = width // cols
+            cell_h = height // rows
+            area = cell_w * cell_h
+            if area > best_area:
+                best_area = area
+                best_cols = cols
+        cols = best_cols
+        rows = (n + cols - 1) // cols
+        cell_w = width // cols
+        cell_h = height // rows
+        return cols, cell_w, cell_h
+
+    def refresh(self):
+        active = [p for p in self.app.active_players if p.get("active") and p["platform"] in ("twitch", "douyin")]
+        old_names = {p["name"] for p in self.players}
+        new_names = {p["name"] for p in active}
+
+        for name in old_names - new_names:
+            self._hide_grid(name)
+        for name in new_names - old_names:
+            player = next(p for p in active if p["name"] == name)
+            self._show_grid(player)
+        self.players = active
+        self._reposition_cells()
+
+        if self.players:
+            if self.empty_label:
+                self.empty_label.place_forget()
+        else:
+            if self.empty_label:
+                self.empty_label.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+
+    def _reposition_cells(self):
+        if not self.players:
+            return
+        cols, cell_w, cell_h = self._calculate_layout()
+        self.columns = cols
+        self.cell_width = cell_w
+        self.cell_height = cell_h
+
+        for idx, player in enumerate(self.players):
+            name = player["name"]
+            if name not in self.grid_widgets:
+                continue
+            row = idx // cols
+            col = idx % cols
+            x = 10 + col * cell_w
+            y = 10 + row * cell_h
+            frame, canvas, label = self.grid_widgets[name]
+            frame.place(x=x, y=y, width=cell_w, height=cell_h)
+            label_height = 25
+            canvas.place(x=0, y=0, width=cell_w, height=cell_h - label_height)
+            label.place(x=0, y=cell_h - label_height, width=cell_w, height=label_height)
+
+    def _show_grid(self, player):
+        name = player["name"]
+        if name in self.paused_players:
+            data = self.paused_players.pop(name)
+            frame, canvas, label = data["frame"], data["canvas"], data["label"]
+            self.grid_widgets[name] = (frame, canvas, label)
+            mp = data.get("mp")
+            if mp:
+                mp.play()
+            return
+        if name in self.grid_widgets:
+            return
+        frame = ttk.Frame(self.container, borderwidth=1, relief=tk.SUNKEN)
+        canvas = tk.Canvas(frame, bg="black")
+        name_label = tk.Label(frame, text=name, bg="#333333", fg="white", font=("微软雅黑", 9))
+        frame.place(x=0, y=0, width=100, height=100)
+        canvas.place(x=0, y=0, width=100, height=75)
+        name_label.place(x=0, y=75, width=100, height=25)
+        self.grid_widgets[name] = (frame, canvas, name_label)
+
+        if name not in self.vlc_instances:
+            default_sn = f"player{player['id']}"
+            stream_name = player.get("stream_name", default_sn)
+            rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
+            self.win.after(2000, self._start_vlc, name, canvas, rtmp_url)
+
+    def _hide_grid(self, name):
+        if name not in self.grid_widgets:
+            return
+        frame, canvas, label = self.grid_widgets.pop(name)
+        frame.place_forget()
+        if name in self.vlc_instances:
+            inst, mp, _ = self.vlc_instances[name]
+            try:
+                mp.pause()
+            except:
+                pass
+            self.paused_players[name] = {
+                "frame": frame, "canvas": canvas, "label": label,
+                "inst": inst, "mp": mp, "canvas_widget": canvas
+            }
+        else:
+            frame.destroy()
+
+    def _start_vlc(self, name, canvas, url):
+        if not self.vlc_instance or not self.win.winfo_exists():
+            return
+        if name in self.vlc_instances:
+            return
+        try:
+            canvas.update_idletasks()
+            hwnd = canvas.winfo_id()
+            if not hwnd:
+                return
+            media = self.vlc_instance.media_new(url)
+            media.add_option(":network-caching=300")
+            media.add_option(":no-audio")
+            mp = self.vlc_instance.media_player_new()
+            mp.set_media(media)
+            mp.set_hwnd(hwnd)
+            mp.play()
+            self.vlc_instances[name] = (self.vlc_instance, mp, canvas)
+        except Exception as e:
+            log("系统", f"监视器启动失败 {name}: {e}")
+
+    def refresh_all(self):
+        for name in list(self.vlc_instances.keys()):
+            _, mp, _ = self.vlc_instances.pop(name)
+            try:
+                mp.stop()
+                mp.release()
+            except:
+                pass
+        self.refresh()
+
+    def _start_mouse_listener(self):
+        def on_click(x, y, button, pressed):
+            if not pressed or button != mouse.Button.left:
+                return True
+            if not self.win.winfo_exists():
+                return True
+            rel_x = x - self.container.winfo_rootx()
+            rel_y = y - self.container.winfo_rooty()
+            cols = self.columns
+            if cols <= 0:
+                return True
+            for idx, player in enumerate(self.players):
+                row = idx // cols
+                col = idx % cols
+                x0 = 10 + col * self.cell_width
+                y0 = 10 + row * self.cell_height
+                if x0 <= rel_x <= x0 + self.cell_width and y0 <= rel_y <= y0 + self.cell_height:
+                    self.app.root.after(0, self.app.switch_to, player)
+                    break
+            return True
+        self.mouse_listener = mouse.Listener(on_click=on_click)
+        self.mouse_listener.start()
+
+    def on_close(self):
+        if self.mouse_listener:
+            self.mouse_listener.stop()
+            self.mouse_listener = None
+        for name in list(self.vlc_instances.keys()):
+            _, mp, _ = self.vlc_instances[name]
+            try:
+                mp.stop()
+                mp.release()
+            except:
+                pass
+        self.vlc_instances.clear()
+        for name in list(self.paused_players.keys()):
+            data = self.paused_players[name]
+            try:
+                if "mp" in data:
+                    data["mp"].stop()
+                    data["mp"].release()
+            except:
+                pass
+            data["frame"].destroy()
+        self.paused_players.clear()
+        self.win.destroy()
+
+    def update_if_open(self):
+        if self.win and self.win.winfo_exists():
+            self.refresh()
+
+# ==================== 带复选框的 Treeview ====================
+class CheckboxTreeview(ttk.Treeview):
+    def __init__(self, parent, columns, checkbox_col="#1", **kwargs):
+        super().__init__(parent, columns=columns, selectmode="browse", **kwargs)
+        self.checkbox_col = checkbox_col
+        self.checked = set()
+        self.bind("<Button-1>", self._on_click)
+
+    def _on_click(self, event):
+        region = self.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+        column = self.identify_column(event.x)
+        if column != self.checkbox_col:
+            return
+        item = self.identify_row(event.y)
+        if not item:
+            return
+        if item in self.checked:
+            self.checked.remove(item)
+        else:
+            self.checked.add(item)
+        self._update_checkbox(item)
+        self._refresh_tag()
+
+    def _update_checkbox(self, item):
+        values = list(self.item(item, "values"))
+        if item in self.checked:
+            values[0] = "☑"
+        else:
+            values[0] = "☐"
+        self.item(item, values=values)
+
+    def insert(self, parent, index, **kwargs):
+        kwargs.setdefault("values", ["☐"])
+        item = super().insert(parent, index, **kwargs)
+        self._update_checkbox(item)
+        return item
+
+    def _refresh_tag(self):
+        for child in self.get_children():
+            self.item(child, tags=())
+        for item in self.checked:
+            if self.exists(item):
+                self.item(item, tags=("checked",))
+        self.tag_configure("checked", background="#a0d2ff")
+
+    def get_checked_names(self):
+        names = []
+        for item in self.checked:
+            if self.exists(item):
+                vals = self.item(item, "values")
+                if len(vals) >= 2:
+                    names.append(vals[1])
+        return names
+
+    def set_checked_by_name(self, names):
+        self.checked.clear()
+        for child in self.get_children():
+            if self.exists(child):
+                vals = self.item(child, "values")
+                if len(vals) >= 2 and vals[1] in names:
+                    self.checked.add(child)
+        for child in self.get_children():
+            if self.exists(child):
+                self._update_checkbox(child)
+        self._refresh_tag()
+
+    def clear_checked(self):
+        self.checked.clear()
+        for child in self.get_children():
+            if self.exists(child):
+                values = list(self.item(child, "values"))
+                values[0] = "☐"
+                self.item(child, values=values)
+        self._refresh_tag()
+
+# ==================== 主界面 ====================
+class ManagerApp:
+    def __init__(self, root):
+        global app
+        app = self
+        self.root = root
+        self.root.title("多视角切换管理器 Pro")
+        self.players = []
+        self.active_players = []
+        self.next_id = 1
+        self.obs = None
+        self.max_streams = DEFAULT_MAX_STREAMS
+        self.hotkey_modifiers = DEFAULT_HOTKEY_MODIFIERS
+        self._drag_data = {"player": None, "source_widget": None}
+        self.stream_status_cache = {}
+        self.switcher_proc = None
+        self.drag_label = None
+        self.auto_detect = tk.BooleanVar(value=True)
+        self.data_lock = threading.Lock()
+        self.current_log_player = tk.StringVar(value="系统")
+        self.original_scene = None
+        self.monitor_window = None
+        self.pool_label = None
+        self.first_run = not os.path.exists(CONFIG_FILE)
+        self.load_cfg()
+        self.create_widgets()
+        self.refresh_store_tree()
+        self._update_log_combo()
+        if self.first_run or not self.obs_host:
+            self.show_obs_login()
+        self.root.after(100, self.async_connect_obs)
+        self._cleanup_edge_profiles()
+        self.refresh_loop()
+        self.start_status_monitor()
+        self.start_log_consumer()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.after(2000, self.all_start)
+
+    def load_cfg(self):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            log("系统", "配置文件加载成功")
+        except FileNotFoundError:
+            cfg = {"obs_host": "localhost", "obs_port": 4455, "obs_password": "", "players": [], "max_active_streams": DEFAULT_MAX_STREAMS, "hotkey_modifiers": DEFAULT_HOTKEY_MODIFIERS}
+            log("系统", "配置文件不存在，创建默认配置")
+        except json.JSONDecodeError:
+            backup = CONFIG_FILE + ".backup"
+            if os.path.exists(backup):
+                with open(backup, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                log("系统", "配置文件损坏，已从备份恢复")
+            else:
+                cfg = {"obs_host": "localhost", "obs_port": 4455, "obs_password": "", "players": [], "max_active_streams": DEFAULT_MAX_STREAMS, "hotkey_modifiers": DEFAULT_HOTKEY_MODIFIERS}
+                log("系统", "配置文件损坏且无备份，使用默认配置")
+        except Exception as e:
+            cfg = {"obs_host": "localhost", "obs_port": 4455, "obs_password": "", "players": [], "max_active_streams": DEFAULT_MAX_STREAMS, "hotkey_modifiers": DEFAULT_HOTKEY_MODIFIERS}
+            log("系统", f"读取配置文件异常: {e}")
+
+        self.obs_host = cfg.get("obs_host", "localhost")
+        self.obs_port = cfg.get("obs_port", 4455)
+        self.obs_pwd = cfg.get("obs_password", "")
+        self.max_streams = cfg.get("max_active_streams", DEFAULT_MAX_STREAMS)
+        self.hotkey_modifiers = cfg.get("hotkey_modifiers", DEFAULT_HOTKEY_MODIFIERS)
+
+        players_raw = cfg.get("players", [])
+        self.players = []
+        self.active_players = []
+        max_id = 0
+        for p in players_raw:
+            pid = p.get("id", 0)
+            if not pid:
+                max_id += 1
+                pid = max_id
+            else:
+                max_id = max(max_id, pid)
+            player_obj = {
+                "id": pid,
+                "name": p.get("name", ""),
+                "hotkey": p.get("hotkey", ""),
+                "platform": p.get("platform", "bilibili"),
+                "room_id": p.get("room_id", ""),
+                "twitch_url": p.get("twitch_url", "") or p.get("channel", ""),
+                "douyin_url": p.get("douyin_url", ""),
+                "quality": p.get("quality", "best"),
+                "browser_url": p.get("browser_url", ""),
+                "view_label": normalize_view_label(p.get("view_label", 0)),
+                "stream_name": p.get("stream_name", f"player{pid}"),
+                "obs_source_name": p.get("obs_source_name", ""),
+                "active": False,
+                "source_ok": None,
+                "stream_pid": None,
+                "window_title": f"OBS_Window_{p.get('name', '')}"
+            }
+            self.players.append(player_obj)
+            if player_obj["obs_source_name"]:
+                self.active_players.append(player_obj)
+        self.next_id = max_id + 1
+        self.reorder_all_view_labels()
+        self.save_config()
+
+    def reorder_all_view_labels(self):
+        if not self.players:
+            return
+        sorted_p = sorted(self.players, key=lambda p: (isinstance(p["view_label"], int), p["view_label"] if isinstance(p["view_label"], int) else 9999))
+        for idx, p in enumerate(sorted_p, start=1):
+            if p["view_label"] != idx:
+                p["view_label"] = idx
+                p["obs_source_name"] = f"{p['name']}_{idx}_{p['hotkey']}"
+
+    def async_connect_obs(self):
+        def _connect():
+            self.obs = OBSController(self.obs_host, self.obs_port, self.obs_pwd)
+            ok, err = self.obs.connect()
+            self.root.after(0, lambda: self._on_obs_connected(ok, err))
+        threading.Thread(target=_connect, daemon=True).start()
+
+    def _on_obs_connected(self, ok, err):
+        if ok:
+            self.original_scene = self.obs.scene_name
+            self.obs_status_label.config(text="✅ OBS 已连接", foreground="green")
+            self.setup_scene()
+            self.refresh_ui()
+        else:
+            self.obs_status_label.config(text="⚠ OBS 断开", foreground="red")
+
+    def setup_scene(self):
+        if not self.obs or not self.obs.connected:
+            return
+        try:
+            if not self.obs.scene_exists(DEDICATED_SCENE):
+                self.obs.create_scene(DEDICATED_SCENE)
+            if self.obs.scene_name != DEDICATED_SCENE:
+                self.obs.switch_scene(DEDICATED_SCENE)
+        except Exception as e:
+            log("系统", f"场景设置失败: {e}")
+
+    def create_widgets(self):
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=0)
+        self.root.rowconfigure(1, weight=1)
+        self.root.rowconfigure(2, weight=1)
+        self.root.rowconfigure(3, weight=0)
+
+        toolbar = ttk.Frame(self.root, padding=5)
+        toolbar.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(10, 0))
+        ttk.Button(toolbar, text="➕ 添加选手", command=self.add).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="📋 快速添加", command=self.quick_add).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="📥 批量导入", command=self.bulk_import_window).pack(side=tk.LEFT, padx=2)
+        ttk.Checkbutton(toolbar, text="自动检测源状态", variable=self.auto_detect).pack(side=tk.LEFT, padx=10)
+        ttk.Button(toolbar, text="🔄 重连 OBS", command=self.reconnect_obs).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="🔁 重启服务", command=self.restart_services).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="🖥 监视器", command=self.toggle_monitor).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="❓ 帮助", command=self.show_help).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="📤 批量添加到视角", command=self.batch_move_to_active).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="▶ 批量上源", command=self.batch_activate).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="⏸ 批量下源", command=self.batch_deactivate).pack(side=tk.LEFT, padx=2)
+        self.obs_status_label = tk.Label(toolbar, text="OBS: 检测中", fg="orange")
+        self.obs_status_label.pack(side=tk.RIGHT, padx=5)
+
+        main = ttk.Frame(self.root)
+        main.grid(row=1, column=0, padx=10, pady=5, sticky=tk.NSEW)
+        main.columnconfigure(0, weight=3)
+        main.columnconfigure(1, weight=1)
+        main.rowconfigure(0, weight=1)
+        main.rowconfigure(1, weight=1)
+
+        store_frame = ttk.LabelFrame(main, text="选手仓库 (勾选即可多选)", padding=2)
+        store_frame.grid(row=0, column=0, sticky=tk.NSEW)
+        store_frame.columnconfigure(0, weight=1)
+        store_frame.rowconfigure(0, weight=1)
+        self.store_tree = CheckboxTreeview(store_frame, columns=("sel", "name", "platform", "status", "key"),
+                                           checkbox_col="#1", show="headings")
+        self.store_tree.heading("sel", text="选择")
+        self.store_tree.heading("name", text="名称")
+        self.store_tree.heading("platform", text="平台")
+        self.store_tree.heading("status", text="状态")
+        self.store_tree.heading("key", text="键")
+        self.store_tree.column("sel", width=40, anchor=tk.CENTER)
+        self.store_tree.column("platform", width=60)
+        self.store_tree.grid(row=0, column=0, sticky=tk.NSEW)
+        self.store_tree.bind("<Button-3>", self.on_store_right_click)
+
+        active_frame = ttk.LabelFrame(main, text="视角列表 (勾选即可多选)", padding=2)
+        active_frame.grid(row=1, column=0, sticky=tk.NSEW)
+        active_frame.columnconfigure(0, weight=1)
+        active_frame.rowconfigure(0, weight=1)
+        self.active_tree = CheckboxTreeview(active_frame, columns=("sel", "name", "platform", "source", "status", "key"),
+                                            checkbox_col="#1", show="headings")
+        self.active_tree.heading("sel", text="选择")
+        self.active_tree.heading("name", text="名称")
+        self.active_tree.heading("platform", text="平台")
+        self.active_tree.heading("source", text="OBS源")
+        self.active_tree.heading("status", text="状态")
+        self.active_tree.heading("key", text="键")
+        self.active_tree.column("sel", width=40, anchor=tk.CENTER)
+        self.active_tree.column("platform", width=60)
+        self.active_tree.grid(row=0, column=0, sticky=tk.NSEW)
+        self.active_tree.bind("<Button-3>", self.on_active_right_click)
+
+        right = ttk.Frame(main)
+        right.grid(row=0, column=1, rowspan=2, sticky=tk.NSEW, padx=(10, 0))
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(0, weight=0)
+        right.rowconfigure(1, weight=1)
+
+        cur_frame = ttk.LabelFrame(right, text="当前视角", padding=5)
+        cur_frame.grid(row=0, column=0, sticky=tk.EW, pady=(0, 10))
+        self.cur_label = tk.Label(cur_frame, text="无", font=("微软雅黑", 14), bg="#E6F2FF", relief=tk.SUNKEN, anchor=tk.CENTER)
+        self.cur_label.pack(fill=tk.X, ipady=10)
+
+        pool_frame = ttk.LabelFrame(right, text=f"活跃池 (最多{self.max_streams}个)", padding=5)
+        pool_frame.grid(row=1, column=0, sticky=tk.NSEW)
+        pool_frame.columnconfigure(0, weight=1)
+        pool_frame.rowconfigure(0, weight=1)
+        self.pool_list = tk.Listbox(pool_frame, height=6, font=("微软雅黑", 10))
+        self.pool_list.grid(row=0, column=0, sticky=tk.NSEW)
+        settings_btn = ttk.Button(pool_frame, text="⚙️", width=3, command=self.show_settings)
+        settings_btn.grid(row=1, column=0, sticky=tk.SE, padx=5, pady=5)
+        self.pool_label = pool_frame
+
+        log_frame = ttk.LabelFrame(self.root, text="选手日志", padding=5)
+        log_frame.grid(row=2, column=0, padx=10, pady=(5, 5), sticky=tk.NSEW)
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=0)
+        log_frame.rowconfigure(1, weight=1)
+        log_selector = ttk.Frame(log_frame)
+        log_selector.grid(row=0, column=0, sticky=tk.EW)
+        ttk.Label(log_selector, text="查看日志:").pack(side=tk.LEFT, padx=5)
+        self.log_combo = ttk.Combobox(log_selector, textvariable=self.current_log_player, state="readonly", values=["系统"])
+        self.log_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        self.log_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_log_view())
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=8, font=("Consolas", 9), state=tk.DISABLED)
+        self.log_text.grid(row=1, column=0, sticky=tk.NSEW)
+
+        self.status_var = tk.StringVar(value="就绪")
+        ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W).grid(row=3, column=0, sticky=tk.EW, padx=10, pady=(0, 5))
+
+    # ---------- 辅助获取勾选 ----------
+    def get_selected_store_players(self):
+        names = self.store_tree.get_checked_names()
+        return [p for p in self.players if p["name"] in names]
+
+    def get_selected_active_players(self):
+        names = self.active_tree.get_checked_names()
+        return [p for p in self.active_players if p["name"] in names]
+
+    def batch_move_to_active(self):
+        selected = self.get_selected_store_players()
+        if not selected:
+            messagebox.showinfo("提示", "请先在仓库中勾选选手")
+            return
+        for player in selected:
+            self.move_to_active(player)
+        self.store_tree.clear_checked()
+        self.set_status(f"已添加 {len(selected)} 个选手到视角列表")
+
+    def batch_activate(self):
+        selected = self.get_selected_active_players()
+        if not selected:
+            messagebox.showinfo("提示", "请先在视角列表中勾选选手")
+            return
+        to_activate = [p for p in selected if p["platform"] in ("twitch", "douyin") and not p["active"]]
+        if not to_activate:
+            messagebox.showinfo("提示", "所选选手无需上源或平台不支持")
+            return
+        current_active = sum(1 for p in self.active_players if p.get("active"))
+        free = self.max_streams - current_active
+        if len(to_activate) > free:
+            messagebox.showwarning("限制", f"活跃池剩余 {free} 个名额，只能上源 {free} 个选手")
+            to_activate = to_activate[:free]
+        for player in to_activate:
+            self.activate_player(player)
+        self.active_tree.clear_checked()
+        self.set_status(f"已上源 {len(to_activate)} 个选手")
+
+    def batch_deactivate(self):
+        selected = self.get_selected_active_players()
+        if not selected:
+            messagebox.showinfo("提示", "请先在视角列表中勾选选手")
+            return
+        to_deactivate = [p for p in selected if p["platform"] in ("twitch", "douyin") and p["active"]]
+        for player in to_deactivate:
+            self.deactivate_player(player)
+        self.active_tree.clear_checked()
+        self.set_status(f"已下源 {len(to_deactivate)} 个选手")
+
+    def refresh_store_tree(self):
+        checked_names = self.store_tree.get_checked_names()
+        self.store_tree.delete(*self.store_tree.get_children())
+        for p in sorted(self.players, key=lambda x: x["hotkey"]):
+            self.store_tree.insert("", tk.END, values=("☐", p["name"], p["platform"], "📦 仓库中", p["hotkey"]))
+        self.store_tree.set_checked_by_name(checked_names)
+
+    def one_click_activate(self, player):
+        if player["platform"] not in ("twitch", "douyin"):
+            messagebox.showinfo("提示", "该平台不支持直接上源")
+            return
+        self.move_to_active(player)
+        self.activate_player(player)
+
+    def move_to_active(self, player):
+        if not self.obs or not self.obs.connected:
+            messagebox.showwarning("提示", "OBS 未连接")
+            return
+        with self.data_lock:
+            if player in self.active_players:
+                return
+            self.active_players.append(player)
+        player["active"] = False
+        if player["platform"] in ("twitch", "douyin"):
+            self.sync_player(player)
+        elif player["platform"] in ("bilibili", "custom_web"):
+            self.sync_player(player)
+            threading.Thread(target=lambda: open_browser_window(player), daemon=True).start()
+        else:
+            pass
+        self.save_config()
+        self._update_log_combo()
+        self.refresh_ui()
+
+    def move_to_store(self, player):
+        if not self.obs or not self.obs.connected:
+            return
+        with self.data_lock:
+            if player not in self.active_players:
+                return
+        def do_move():
+            if self.get_current_display_name() == player["name"]:
+                if player.get("obs_source_name"):
+                    self.obs.set_visibility(player["obs_source_name"], False)
+                    self.obs.set_mute(player["obs_source_name"], True)
+            # 如果是网页源，静音浏览器窗口
+            if player["platform"] in ("bilibili", "custom_web"):
+                mute_browser_window(player["window_title"], mute=True)
+            stop_stream(player)
+            if player["obs_source_name"]:
+                self.obs.remove_source(player["obs_source_name"])
+            with self.data_lock:
+                if player in self.active_players:
+                    self.active_players.remove(player)
+            player["active"] = False
+            player["obs_source_name"] = ""
+            self.save_config()
+            self._update_log_combo()
+            self.root.after(0, self.refresh_ui)
+        threading.Thread(target=do_move, daemon=True).start()
+
+    def on_store_right_click(self, event):
+        item = self.store_tree.identify_row(event.y)
+        if item:
+            name = self.store_tree.item(item, "values")[1]
+            player = self.find_player_in_any(name)
+            if player:
+                menu = Menu(self.root, tearoff=0)
+                menu.add_command(label="✏ 编辑", command=lambda: self.edit_player(player))
+                menu.add_command(label="🗑 删除", command=lambda: self.delete_player(player))
+                menu.add_separator()
+                if player["platform"] in ("bilibili", "custom_web"):
+                    menu.add_command(label="🌐 打开直播间", command=lambda: self.open_player_url(player))
+                menu.add_command(label="📥 添加到视角列表", command=lambda: self.move_to_active(player))
+                if player["platform"] in ("twitch", "douyin"):
+                    menu.add_command(label="🚀 一键上源", command=lambda: self.one_click_activate(player))
+                menu.post(event.x_root, event.y_root)
+
+    def on_active_right_click(self, event):
+        item = self.active_tree.identify_row(event.y)
+        if item:
+            name = self.active_tree.item(item, "values")[1]
+            player = self.find_player_in_any(name)
+            if player:
+                menu = Menu(self.root, tearoff=0)
+                menu.add_command(label="✏ 编辑", command=lambda: self.edit_player(player))
+                if player["platform"] in ("twitch", "douyin"):
+                    if player.get("active"):
+                        menu.add_command(label="⏸ 下源", command=lambda: self.deactivate_player(player))
+                    else:
+                        menu.add_command(label="▶ 上源", command=lambda: self.activate_player(player))
+                    menu.add_separator()
+                    menu.add_command(label="🔄 刷新源", command=lambda: self.refresh_player(player))
+                    menu.add_command(label="🔍 检测源", command=lambda: self.detect_source(player))
+                else:
+                    menu.add_command(label="🌐 打开直播间", command=lambda: self.open_player_url(player))
+                menu.add_separator()
+                menu.add_command(label="📤 移回仓库", command=lambda: self.move_to_store(player))
+                if player["platform"] in ("twitch", "douyin"):
+                    menu.add_command(label="🎥 切换到此视角", command=lambda: self.switch_to(player))
+                batch_menu = Menu(menu, tearoff=0)
+                selected = self.get_selected_active_players()
+                if selected:
+                    batch_menu.add_command(label="批量上源", command=self.batch_activate)
+                    batch_menu.add_command(label="批量下源", command=self.batch_deactivate)
+                    batch_menu.add_command(label="批量移回仓库", command=lambda: [self.move_to_store(p) for p in selected])
+                menu.add_cascade(label="📋 批量操作", menu=batch_menu)
+                menu.post(event.x_root, event.y_root)
+
+    # ---------- 核心操作 ----------
+    def activate_player(self, player):
+        if player["platform"] not in ("twitch", "douyin") or player.get("active"):
+            return
+        if not self.obs or not self.obs.connected:
+            messagebox.showwarning("提示", "OBS 未连接，无法上源")
+            return
+        active_count = sum(1 for p in self.active_players if p.get("active"))
+        if active_count >= self.max_streams:
+            messagebox.showwarning("限制", f"活跃池已满 (最多{self.max_streams}个)")
+            return
+        player["active"] = True
+        log("系统", f"激活选手 {player['name']}，开始创建源并启动推流")
+        self.sync_player(player)
+        self.save_config()
+        def do_start():
+            log("系统", f"启动推流线程: {player['name']}")
+            if not start_stream(player, self.obs):
+                time.sleep(2)
+                if not start_stream(player, self.obs):
+                    self.stream_status_cache[player["name"]] = False
+                    log("系统", f"推流启动失败: {player['name']}")
+            self.root.after(0, self.refresh_ui)
+        threading.Thread(target=do_start, daemon=True).start()
+        self.refresh_ui()
+
+    def deactivate_player(self, player):
+        if player["platform"] not in ("twitch", "douyin"):
+            return
+        if self.get_current_display_name() == player["name"]:
+            if player.get("obs_source_name"):
+                self.obs.set_visibility(player["obs_source_name"], False)
+                self.obs.set_mute(player["obs_source_name"], True)
+        player["active"] = False
+        stop_stream(player)
+        self.refresh_ui()
+
+    def switch_to(self, player):
+        if not self.obs or not self.obs.connected:
+            return
+        if player["platform"] in ("bilibili", "custom_web"):
+            src_name = player.get("obs_source_name")
+            if src_name and self.obs.source_exists(src_name):
+                cur_name = self.get_current_display_name()
+                if cur_name == player["name"]:
+                    return
+                # 静音之前的网页源
+                if cur_name:
+                    prev = self.find_player_in_any(cur_name)
+                    if prev and prev["platform"] in ("bilibili", "custom_web"):
+                        mute_browser_window(prev["window_title"], mute=True)
+                    if prev and prev.get("obs_source_name"):
+                        self.obs.set_mute(prev["obs_source_name"], True)
+                        self.obs.set_visibility(prev["obs_source_name"], False)
+                # 取消静音当前网页源
+                mute_browser_window(player["window_title"], mute=False)
+                self.obs.set_visibility(src_name, True)
+                self.obs.set_mute(src_name, False)
+                log("系统", f"切换视角至 {player['name']} (网页)")
+                self.current_log_player.set(player["name"])
+                self.root.after(1, self.refresh_ui)
+            else:
+                log("系统", f"网页源不存在: {src_name}")
+            return
+
+        if player["platform"] not in ("twitch", "douyin"):
+            return
+        cur_name = self.get_current_display_name()
+        if cur_name == player["name"]:
+            return
+
+        src_name = player.get("obs_source_name")
+        if not src_name or not self.obs.source_exists(src_name):
+            log("系统", f"切换失败，源不存在: {src_name}")
+            return
+
+        # 静音之前的网页源（如果有）
+        if cur_name:
+            prev = self.find_player_in_any(cur_name)
+            if prev and prev["platform"] in ("bilibili", "custom_web"):
+                mute_browser_window(prev["window_title"], mute=True)
+            if prev and prev.get("obs_source_name"):
+                self.obs.set_mute(prev["obs_source_name"], True)
+                self.obs.set_visibility(prev["obs_source_name"], False)
+
+        self.obs.set_visibility(src_name, True)
+        self.obs.set_mute(src_name, False)
+        log("系统", f"切换视角至 {player['name']}")
+
+        self.current_log_player.set(player["name"])
+        self.root.after(1, self.refresh_ui)
+
+    def refresh_player(self, player):
+        if player["platform"] not in ("twitch", "douyin"):
+            return
+        if not player.get("active"):
+            self.activate_player(player)
+            return
+        self.deactivate_player(player)
+        def delayed_activate():
+            time.sleep(2)
+            self.activate_player(player)
+        threading.Thread(target=delayed_activate, daemon=True).start()
+
+    # ---------- 通用方法 ----------
+    def find_player_in_any(self, name):
+        for p in self.players:
+            if p["name"] == name:
+                return p
+        return None
+
+    def get_current_display_name(self):
+        if not self.obs or not self.obs.connected:
+            return None
+        for p in self.active_players:
+            if p.get("obs_source_name") and self.obs.get_visible(p["obs_source_name"]):
+                return p["name"]
+        return None
+
+    def sync_player(self, player):
+        if not self.obs or not self.obs.connected:
+            return
+        if player["platform"] in ("twitch", "douyin"):
+            desired = f"{player['name']}_{player['view_label']}_{player['hotkey']}"
+            old = player.get("obs_source_name")
+            if old and self.obs.source_exists(old):
+                if old != desired:
+                    if self.obs.source_exists(desired):
+                        self.obs.remove_source(desired)
+                    if not self.obs.rename_source(old, desired):
+                        self.obs.remove_source(old)
+                        self.obs.create_vlc(desired, f"rtmp://localhost:1935/live/{player['stream_name']}")
+            elif not self.obs.source_exists(desired):
+                self.obs.create_vlc(desired, f"rtmp://localhost:1935/live/{player['stream_name']}")
+            player["obs_source_name"] = desired
+            log("系统", f"sync_player 完成: {player['name']} -> {desired}")
+        elif player["platform"] in ("bilibili", "custom_web"):
+            desired = f"{player['name']}_{player['view_label']}_{player['hotkey']}"
+            old = player.get("obs_source_name")
+            if old and self.obs.source_exists(old):
+                if old != desired:
+                    if self.obs.source_exists(desired):
+                        self.obs.remove_source(desired)
+                    if not self.obs.rename_source(old, desired):
+                        self.obs.remove_source(old)
+                        self.obs.create_window_capture(desired, window_title=player.get("window_title", ""))
+            elif not self.obs.source_exists(desired):
+                self.obs.create_window_capture(desired, window_title=player.get("window_title", ""))
+            player["obs_source_name"] = desired
+            log("系统", f"sync_player 完成: {player['name']} -> {desired} (网页)")
+
+    def _cleanup_edge_profiles(self):
+        profiles_dir = os.path.join(BASE_DIR, "edge_profiles")
+        if not os.path.isdir(profiles_dir):
+            return
+        current_ids = {str(p["id"]) for p in self.players}
+        for folder_name in os.listdir(profiles_dir):
+            if folder_name.startswith("player"):
+                if folder_name[6:] not in current_ids:
+                    try:
+                        shutil.rmtree(os.path.join(profiles_dir, folder_name))
+                    except:
+                        pass
+
+    # ---------- UI 刷新 ----------
+    def refresh_ui(self):
+        if not self.obs or not self.obs.connected:
+            self.refresh_store_tree()
+            self._update_log_combo()
+            return
+
+        existing = self.obs.get_all_source_names()
+        cur_name = self.get_current_display_name()
+        self.cur_label.config(text=cur_name or "无")
+
+        with self.data_lock:
+            to_remove = [p for p in self.active_players if p.get("obs_source_name") and p["obs_source_name"] not in existing and not (p["name"] == cur_name)]
+            for p in to_remove:
+                self.active_players.remove(p)
+
+        self.refresh_store_tree()
+
+        checked_names = self.active_tree.get_checked_names()
+
+        self.active_tree.delete(*self.active_tree.get_children())
+        for p in sorted(self.active_players, key=lambda x: (isinstance(x["view_label"], int), x["view_label"])):
+            plat = p["platform"]
+            status = "运行中"
+            if plat in ("twitch", "douyin"):
+                if p.get("active"):
+                    alive = self.stream_status_cache.get(p["name"], True)
+                    status = "● 推流中" if alive else "✕ 推流中断"
+                else:
+                    ok = p.get("source_ok")
+                    if ok is True:
+                        status = "✅ 源可播放"
+                    elif ok is False:
+                        status = "❌ 源不可用"
+                    else:
+                        status = "⏸ 未检测"
+            elif plat in ("bilibili", "custom_web"):
+                status = "🌐 网页"
+            if cur_name == p["name"]:
+                status = "★ 当前视角"
+            self.active_tree.insert("", tk.END, values=("☐", p["name"], plat, p.get("obs_source_name", ""), status, p["hotkey"]))
+
+        self.active_tree.set_checked_by_name(checked_names)
+
+        self.pool_list.delete(0, tk.END)
+        for p in self.active_players:
+            if p.get("active"):
+                self.pool_list.insert(tk.END, f"{p['name']} ({p['view_label']})")
+
+        self._update_log_combo()
+        self._update_monitor()
+
+    def _update_monitor(self):
+        if self.monitor_window:
+            self.monitor_window.update_if_open()
+
+    # ---------- 其他 UI 方法 ----------
+    def add(self):
+        dlg = PlayerDialog(self.root, self.players)
+        self.root.wait_window(dlg.top)
+        if dlg.result:
+            self._commit_new_player(dlg.result)
+
+    def quick_add(self):
+        try:
+            clip = self.root.clipboard_get().strip()
+        except:
+            return
+        if not clip:
+            return
+        self.set_status("正在解析链接...")
+        def do_parse():
+            prefill = parse_clipboard_url(clip)
+            if prefill:
+                self.root.after(0, lambda: self._finish_quick_add(prefill))
+            else:
+                self.root.after(0, lambda: messagebox.showwarning("解析失败", "无法识别"))
+        threading.Thread(target=do_parse, daemon=True).start()
+
+    def _finish_quick_add(self, prefill):
+        dlg = PlayerDialog(self.root, self.players, None, prefill=prefill)
+        self.root.wait_window(dlg.top)
+        if dlg.result:
+            self._commit_new_player(dlg.result)
+
+    def _commit_new_player(self, data):
+        p = data
+        p["id"] = self.next_id
+        self.next_id += 1
+        p["view_label"] = get_next_view_label(self.players)
+        p["stream_name"] = f"player{p['id']}"
+        p["active"] = False
+        p["source_ok"] = None
+        p["stream_pid"] = None
+        p["obs_source_name"] = ""
+        p["window_title"] = f"OBS_Window_{p['name']}"
+        with self.data_lock:
+            self.players.append(p)
+        self.restart_services()
+        self.save_config()
+        self._update_log_combo()
+        self.refresh_ui()
+
+    def edit_player(self, player):
+        dlg = PlayerDialog(self.root, self.players, player)
+        self.root.wait_window(dlg.top)
+        if dlg.result:
+            for k, v in dlg.result.items():
+                player[k] = v
+            if player in self.active_players:
+                self.sync_player(player)
+            self.save_config()
+            self._update_log_combo()
+            self.refresh_ui()
+
+    def delete_player(self, player):
+        with self.data_lock:
+            if player in self.active_players:
+                if self.get_current_display_name() == player["name"]:
+                    if player.get("obs_source_name"):
+                        self.obs.set_visibility(player["obs_source_name"], False)
+                        self.obs.set_mute(player["obs_source_name"], True)
+                self.stop_process(player)
+                if player["obs_source_name"]:
+                    self.obs.remove_source(player["obs_source_name"])
+                self.active_players.remove(player)
+            self.players.remove(player)
+        if player["platform"] in ("bilibili", "custom_web"):
+            pass  # 浏览器窗口自行关闭
+        self.restart_services()
+        self.save_config()
+        self._update_log_combo()
+        self.refresh_ui()
+
+    def open_player_url(self, player):
+        url = player.get("browser_url", "")
+        if url:
+            webbrowser.open(url)
+
+    def detect_source(self, player):
+        threading.Thread(target=lambda: (check_source(player), self.root.after(0, self.refresh_ui)), daemon=True).start()
+
+    # ---------- 日志与状态 ----------
+    def _update_log_combo(self):
+        names = ["系统"] + [p["name"] for p in self.players] + ["MediaMTX", "Switcher"]
+        self.log_combo['values'] = names
+        if self.current_log_player.get() not in names:
+            self.current_log_player.set("系统")
+
+    def _refresh_log_view(self):
+        if not hasattr(self, 'log_text'):
+            return
+        target = self.current_log_player.get()
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.delete(1.0, tk.END)
+        if target in player_logs:
+            for line in player_logs[target]:
+                self.log_text.insert(tk.END, line + "\n")
+        self.log_text.see(tk.END)
+        self.log_text.config(state=tk.DISABLED)
+
+    def start_log_consumer(self):
+        def updater():
+            global _log_update_flag
+            while True:
+                if _log_update_flag:
+                    _log_update_flag = False
+                    self.root.after(0, self._refresh_log_view)
+                time.sleep(0.8)
+        threading.Thread(target=updater, daemon=True).start()
+
+    def start_status_monitor(self):
+        def monitor():
+            while True:
+                if self.auto_detect.get():
+                    with self.data_lock:
+                        snapshot = [p for p in self.active_players if p["platform"] in ("twitch", "douyin") and not p["active"]]
+                    for p in snapshot:
+                        check_source(p)
+                time.sleep(AUTO_DETECT_INTERVAL)
+        threading.Thread(target=monitor, daemon=True).start()
+
+    def refresh_loop(self):
+        if self.obs and self.obs.connected:
+            self.refresh_ui()
+        self.root.after(2000, self.refresh_loop)
+
+    def set_status(self, m, t=3000):
+        self.status_var.set(m)
+        self.root.after(t, lambda: self.status_var.set("就绪"))
+
+    # ---------- 系统操作 ----------
+    def all_start(self):
+        if not self.obs or not self.obs.connected:
+            return
+        self.setup_scene()
+        if not mediamtx_proc or mediamtx_proc.poll() is not None:
+            start_mediamtx()
+        self.switcher_proc = start_switcher()
+
+    def all_stop(self):
+        if self.switcher_proc:
+            self.switcher_proc.terminate()
+        for p in self.active_players:
+            self.stop_process(p)
+        stop_mediamtx()
+        if self.monitor_window:
+            self.monitor_window.on_close()
+
+    def start_process(self, player):
+        if player["platform"] in ("twitch", "douyin") and player.get("active"):
+            url = f"rtmp://localhost:1935/live/{player['stream_name']}"
+            if not self.obs.source_exists(player["obs_source_name"]):
+                self.obs.create_vlc(player["obs_source_name"], url)
+            else:
+                self.obs.update_vlc_url(player["obs_source_name"], url)
+            start_stream(player, self.obs)
+
+    def stop_process(self, player):
+        if player["platform"] in ("twitch", "douyin") and player.get("active"):
+            stop_stream(player)
+
+    def restart_services(self):
+        if self.switcher_proc:
+            self.switcher_proc.terminate()
+        stop_mediamtx()
+        start_mediamtx()
+        self.switcher_proc = start_switcher()
+
+    def reconnect_obs(self):
+        def _reconnect():
+            dlg = OBSLoginDialog(self.root, self.obs_host, self.obs_port, self.obs_pwd)
+            if dlg.result:
+                self.obs_host, self.obs_port, self.obs_pwd = dlg.result
+                self.save_config()
+                self.root.after(0, self.async_connect_obs)
+        threading.Thread(target=_reconnect, daemon=True).start()
+
+    def toggle_monitor(self):
+        if self.monitor_window and self.monitor_window.win.winfo_exists():
+            self.monitor_window.win.destroy()
+            self.monitor_window = None
+        else:
+            if not VLC_AVAILABLE:
+                messagebox.showwarning("缺少依赖", "监控功能需要 python-vlc 模块。\npip install python-vlc")
+                return
+            self.monitor_window = MonitorWindow(self)
+
+    def show_settings(self):
+        top = tk.Toplevel(self.root)
+        top.title("系统设置")
+        top.resizable(False, False)
+        top.grab_set()
+        ttk.Label(top, text="最大活跃推流数:", font=("微软雅黑", 10)).grid(row=0, column=0, padx=10, pady=(10, 5), sticky=tk.W)
+        var_streams = tk.IntVar(value=self.max_streams)
+        ttk.Entry(top, textvariable=var_streams, width=10).grid(row=0, column=1, padx=10, pady=(10, 5))
+        ttk.Label(top, text="快捷键修饰键:", font=("微软雅黑", 10)).grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
+        modifier_values = ["alt+shift", "alt", "ctrl+shift"]
+        var_mod = tk.StringVar(value=self.hotkey_modifiers)
+        combo = ttk.Combobox(top, textvariable=var_mod, values=modifier_values, state="readonly", width=10)
+        combo.grid(row=1, column=1, padx=10, pady=5)
+        ttk.Label(top, text="(保存后自动重启服务生效)", foreground="gray").grid(row=2, column=0, columnspan=2, pady=(0, 10))
+
+        def save():
+            try:
+                val = int(var_streams.get())
+                if val < 1:
+                    raise ValueError
+            except:
+                messagebox.showwarning("错误", "请输入正整数")
+                return
+            self.max_streams = val
+            self.hotkey_modifiers = var_mod.get()
+            if self.pool_label:
+                self.pool_label.config(text=f"活跃池 (最多{val}个)")
+            self.save_config()
+            self.restart_services()
+            top.destroy()
+            self.set_status(f"设置已更新，服务已重启")
+
+        btn_frame = ttk.Frame(top)
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=(0, 10))
+        ttk.Button(btn_frame, text="保存", command=save).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_frame, text="取消", command=top.destroy).pack(side=tk.LEFT, padx=10)
+        self.root.wait_window(top)
+
+    def show_help(self):
+        help_text = "帮助内容省略"
+        top = tk.Toplevel(self.root)
+        top.title("使用帮助")
+        top.geometry("500x300")
+        text = scrolledtext.ScrolledText(top, wrap=tk.WORD)
+        text.insert(tk.END, help_text)
+        text.config(state=tk.DISABLED)
+        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        ttk.Button(top, text="关闭", command=top.destroy).pack(pady=(0, 10))
+
+    def bulk_import_window(self):
+        top = tk.Toplevel(self.root)
+        top.title("批量导入选手")
+        top.geometry("600x500")
+        top.resizable(True, True)
+        lbl = tk.Label(top, text="请粘贴链接或频道名，每行一个：", font=("微软雅黑", 10))
+        lbl.pack(padx=10, pady=(10, 5), anchor=tk.W)
+        text_area = scrolledtext.ScrolledText(top, wrap=tk.WORD, font=("Consolas", 10))
+        text_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        status_var = tk.StringVar(value="就绪")
+        status_label = tk.Label(top, textvariable=status_var, fg="gray")
+        status_label.pack(padx=10, pady=5, anchor=tk.W)
+
+        def process_import():
+            content = text_area.get("1.0", tk.END).strip()
+            if not content:
+                messagebox.showwarning("提示", "文本为空")
+                return
+            lines = [line.strip() for line in content.splitlines() if line.strip()]
+            if not lines:
+                messagebox.showwarning("提示", "没有有效行")
+                return
+            status_var.set("正在解析...")
+            btn.config(state=tk.DISABLED)
+
+            def worker():
+                success = 0
+                fail = 0
+                skipped = 0
+                used_hotkeys = set(p["hotkey"] for p in self.players if p.get("hotkey"))
+                used_names = set(p["name"] for p in self.players)
+                existing_urls = set()
+                for p in self.players:
+                    url = p.get("twitch_url") or p.get("douyin_url") or p.get("browser_url")
+                    if url:
+                        existing_urls.add(url)
+
+                def get_next_hotkey():
+                    for ch in [str(i) for i in range(0, 10)] + [chr(i) for i in range(ord('a'), ord('z') + 1)]:
+                        if ch not in used_hotkeys:
+                            return ch
+                    return None
+
+                new_players = []
+                for idx, line in enumerate(lines):
+                    prefill = parse_clipboard_url(line)
+                    if not prefill:
+                        fail += 1
+                        log("系统", f"批量导入第{idx+1}行无法识别: {line}")
+                        continue
+                    url = prefill.get("twitch_url") or prefill.get("douyin_url") or prefill.get("browser_url")
+                    if url and url in existing_urls:
+                        skipped += 1
+                        log("系统", f"批量导入第{idx+1}行重复，已跳过: {line}")
+                        continue
+                    if url:
+                        existing_urls.add(url)
+
+                    name = prefill["name"]
+                    if name in used_names:
+                        base = name
+                        counter = 1
+                        while f"{base}_{counter}" in used_names:
+                            counter += 1
+                        name = f"{base}_{counter}"
+                        prefill["name"] = name
+                    used_names.add(name)
+
+                    hk = get_next_hotkey()
+                    if hk is None:
+                        fail += 1
+                        log("系统", "所有可用快捷键已用完，无法导入更多选手")
+                        break
+                    used_hotkeys.add(hk)
+
+                    pid = self.next_id
+                    self.next_id += 1
+                    view_label = get_next_view_label(self.players + new_players)
+                    player_obj = {
+                        "id": pid,
+                        "name": name,
+                        "hotkey": hk,
+                        "platform": prefill["platform"],
+                        "room_id": prefill.get("room_id", ""),
+                        "twitch_url": prefill.get("twitch_url", ""),
+                        "douyin_url": prefill.get("douyin_url", ""),
+                        "quality": prefill.get("quality", "best"),
+                        "browser_url": prefill.get("browser_url", ""),
+                        "view_label": view_label,
+                        "stream_name": f"player{pid}",
+                        "obs_source_name": "",
+                        "active": False,
+                        "source_ok": None,
+                        "stream_pid": None,
+                        "window_title": f"OBS_Window_{name}"
+                    }
+                    new_players.append(player_obj)
+                    success += 1
+                    log("系统", f"批量导入成功: {name} (快捷键: {hk})")
+
+                def update_ui():
+                    with self.data_lock:
+                        self.players.extend(new_players)
+                    self.restart_services()
+                    self.save_config()
+                    self._update_log_combo()
+                    self.refresh_ui()
+                    status_var.set(f"完成：成功 {success}，跳过 {skipped}，失败 {fail}")
+                    btn.config(state=tk.NORMAL)
+                    msg = f"成功 {success} 个"
+                    if skipped > 0:
+                        msg += f"，跳过 {skipped} 个重复"
+                    if fail > 0:
+                        msg += f"，失败 {fail} 个"
+                    if not get_next_hotkey():
+                        msg += "\n注意：单字符快捷键已用尽，无法再导入新选手。"
+                    messagebox.showinfo("导入完成", msg)
+                self.root.after(0, update_ui)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        btn_frame = ttk.Frame(top)
+        btn_frame.pack(pady=(0, 10))
+        btn = ttk.Button(btn_frame, text="导入", command=process_import)
+        btn.pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_frame, text="关闭", command=top.destroy).pack(side=tk.LEFT, padx=10)
+
+    def save_config(self):
+        cfg = {
+            "obs_host": self.obs_host,
+            "obs_port": self.obs_port,
+            "obs_password": self.obs_pwd,
+            "max_active_streams": self.max_streams,
+            "hotkey_modifiers": self.hotkey_modifiers,
+            "players": self.players,
+            "scene_name": DEDICATED_SCENE
+        }
+        with open(CONFIG_FILE + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=4, ensure_ascii=False)
+        os.replace(CONFIG_FILE + ".tmp", CONFIG_FILE)
+
+    def show_obs_login(self):
+        dlg = OBSLoginDialog(self.root, self.obs_host, self.obs_port, self.obs_pwd)
+        if dlg.result:
+            self.obs_host, self.obs_port, self.obs_pwd = dlg.result
+            self.save_config()
+
+    def on_close(self):
+        log("系统", "正在关闭...")
+        if self.obs and self.obs.connected:
+            try:
+                if self.original_scene and self.original_scene != DEDICATED_SCENE:
+                    self.obs.switch_scene(self.original_scene)
+                if self.obs.scene_exists(DEDICATED_SCENE):
+                    self.obs.remove_scene(DEDICATED_SCENE)
+            except:
+                pass
+        self.all_stop()
+        self.save_config()
+        if self.obs:
+            self.obs.disconnect()
+        self.root.destroy()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    root.geometry("1200x950")
+    root.minsize(1000, 700)
+    ManagerApp(root)
+    root.mainloop()

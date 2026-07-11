@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# 日志文件
+debug.log
+
+# 配置文件备份
+config.json.backup
+*.tmp
+
+# 虚拟环境
+python/
+venv/
+env/
+.venv/
+
+# 可执行文件
+mediamtx.exe
+
+# 证书/密钥
+auto.crt
+auto.key
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统文件
+Thumbs.db
+desktop.ini
