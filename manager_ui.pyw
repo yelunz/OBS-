@@ -891,7 +891,7 @@ class MonitorWindow:
             log("系统", f"[监视器-B站-失败] {name} 没有 browser_url")
             return
 
-        stream_name = f"monitor_{name}"
+        stream_name = f"monitor_{player['id']}"
         rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
         log("系统", f"[监视器-B站-步骤2] URL={url}, RTMP={rtmp_url}")
 
@@ -1022,10 +1022,17 @@ class MonitorWindow:
                 h = canvas.winfo_height()
                 if w > 1 and h > 1:
                     pil_img = Image.open(io.BytesIO(img_bytes))
-                    pil_img = pil_img.resize((w, h), Image.LANCZOS)
+                    # 保持宽高比缩放 (letterbox)
+                    img_w, img_h = pil_img.size
+                    scale = min(w / img_w, h / img_h)
+                    new_w, new_h = int(img_w * scale), int(img_h * scale)
+                    pil_img = pil_img.resize((new_w, new_h), Image.LANCZOS)
                     photo = ImageTk.PhotoImage(pil_img)
                     canvas.delete("all")
-                    canvas.create_image(0, 0, anchor=tk.NW, image=photo)
+                    # 居中绘制
+                    x = (w - new_w) // 2
+                    y = (h - new_h) // 2
+                    canvas.create_image(x, y, anchor=tk.NW, image=photo)
                     # 保持引用防止 GC
                     canvas._photo_ref = photo
             except Exception:
