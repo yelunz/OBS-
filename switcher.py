@@ -3,15 +3,6 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='repla
 from pynput import keyboard
 from obswebsocket import obsws, requests
 
-# 尝试导入窗口控制库
-GW_AVAILABLE = False
-try:
-    import pygetwindow as gw
-    GW_AVAILABLE = True
-except:
-    pass
-import ctypes
-
 BASE_DIR = r"C:\myobs"
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 
@@ -21,31 +12,6 @@ def log(msg):
 def load_config():
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
-
-def mute_browser_window(window_title, mute=True):
-    """模拟 Ctrl+M 静音/取消静音浏览器窗口"""
-    if not GW_AVAILABLE:
-        return
-    try:
-        windows = gw.getWindowsWithTitle(window_title)
-        if not windows:
-            return
-        win = windows[0]
-        prev_hwnd = ctypes.windll.user32.GetForegroundWindow()
-        ctypes.windll.user32.SetForegroundWindow(win._hWnd)
-        time.sleep(0.1)
-        kb = keyboard.Controller()
-        kb.press(keyboard.Key.ctrl)
-        kb.press('m')
-        kb.release('m')
-        kb.release(keyboard.Key.ctrl)
-        time.sleep(0.1)
-        if prev_hwnd:
-            ctypes.windll.user32.SetForegroundWindow(prev_hwnd)
-        action = "静音" if mute else "取消静音"
-        log(f"已对窗口 {window_title} 执行{action}")
-    except Exception as e:
-        log(f"静音操作失败: {e}")
 
 cfg = load_config()
 OBS_HOST = cfg["obs_host"]
@@ -125,48 +91,16 @@ def switch_to(target_player):
         log("OBS 不可用")
         return
 
-    plat = target_player["platform"]
     name = target_player["name"]
-
-    # 网页源（bilibili / custom_web）
-    if plat in ("bilibili", "custom_web"):
-        target_name = target_player.get("obs_source_name")
-        if not target_name or target_name not in source_to_id:
-            log(f"网页源 {target_name} 不存在")
-            return
-
-        # 先静音之前的网页源（如果有）
-        for p in hotkey_map.values():
-            if p["platform"] in ("bilibili", "custom_web") and p.get("obs_source_name"):
-                src = p["obs_source_name"]
-                if src != target_name and src in source_to_id:
-                    # 静音浏览器窗口
-                    mute_browser_window(p.get("window_title", ""), mute=True)
-                    set_mute(src, True)
-                    set_visible(src, False)
-
-        # 取消静音当前网页源
-        mute_browser_window(target_player.get("window_title", ""), mute=False)
-        set_mute(target_name, False)
-        set_visible(target_name, True)
-        log(f"已切换至网页模式 ({name})")
-        return
-
-    # Twitch / 抖音
-    if plat not in ("twitch", "douyin"):
-        return
-
     target_name = target_player.get("obs_source_name")
     if not target_name or target_name not in source_to_id:
         log(f"源 {target_name} 不存在")
         return
 
-    # 关闭所有其他源（包括网页源）
+    # 统一处理所有平台：隐藏并静音其他源，显示并取消静音目标源
     for p in hotkey_map.values():
         src = p.get("obs_source_name")
         if src and src != target_name and src in source_to_id:
-            if p["platform"] in ("bilibili", "custom_web"):
-                mute_browser_window(p.get("window_title", ""), mute=True)
             set_mute(src, True)
             set_visible(src, False)
 

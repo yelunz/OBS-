@@ -15,14 +15,6 @@ try:
 except Exception:
     pass
 
-# ==================== 窗口操作模块 ====================
-GW_AVAILABLE = False
-try:
-    import pygetwindow as gw
-    GW_AVAILABLE = True
-except:
-    pass
-
 # ==================== 每次启动清空日志 ====================
 LOG_FILE = os.path.join(r"C:\myobs", "debug.log")
 try:
@@ -165,6 +157,33 @@ class OBSController:
         except Exception as e:
             log("系统", f"窗口采集源创建失败: {name} - {e}")
 
+    def create_browser_source(self, name, url, width=1920, height=1080):
+        """
+        创建 OBS 浏览器源
+        参数: 1920x1080 标准分辨率, reroute_audio=True 用于独立音频控制
+        """
+        log("系统", f"[创建浏览器源-步骤1] 开始为 {name} 创建浏览器源, URL: {url}")
+        settings = {
+            "url": url,
+            "width": width,
+            "height": height,
+            "fps": 30,
+            "reroute_audio": True,
+            "restart_when_active": False,
+            "shutdown": False,
+        }
+        try:
+            self.ws.call(requests.CreateInput(
+                sceneName=self.scene_name,
+                inputName=name,
+                inputKind="browser_source",
+                inputSettings=settings,
+                sceneItemEnabled=False
+            ))
+            log("系统", f"[创建浏览器源-步骤2-完成] 浏览器源 {name} 创建成功 ({width}x{height}, 音频独立路由)")
+        except Exception as e:
+            log("系统", f"[创建浏览器源-步骤2-失败] 浏览器源创建失败: {name} - {e}")
+
     def remove_source(self, name):
         try:
             self.ws.call(requests.RemoveInput(inputName=name))
@@ -240,34 +259,6 @@ AUTO_DETECT_INTERVAL = 120
 DEDICATED_SCENE = "多视角切换"
 DEFAULT_MAX_STREAMS = 6
 DEFAULT_HOTKEY_MODIFIERS = "alt+shift"
-
-# ==================== 网页静音函数 ====================
-def mute_browser_window(window_title, mute=True):
-    """模拟 Ctrl+M 静音/取消静音浏览器窗口"""
-    if not GW_AVAILABLE:
-        log("系统", "pygetwindow 未安装，无法静音浏览器窗口")
-        return
-    try:
-        windows = gw.getWindowsWithTitle(window_title)
-        if not windows:
-            log("系统", f"未找到窗口: {window_title}")
-            return
-        win = windows[0]
-        prev_hwnd = ctypes.windll.user32.GetForegroundWindow()
-        ctypes.windll.user32.SetForegroundWindow(win._hWnd)
-        time.sleep(0.1)
-        kb = keyboard.Controller()
-        kb.press(keyboard.Key.ctrl)
-        kb.press('m')
-        kb.release('m')
-        kb.release(keyboard.Key.ctrl)
-        time.sleep(0.1)
-        if prev_hwnd:
-            ctypes.windll.user32.SetForegroundWindow(prev_hwnd)
-        action = "静音" if mute else "取消静音"
-        log("系统", f"已对窗口 {window_title} 执行{action}")
-    except Exception as e:
-        log("系统", f"静音操作失败: {e}")
 
 # ==================== 进程管理 ====================
 def read_stream_output(proc, prefix, player_name, obs_ref=None, stream_name=None):
@@ -367,70 +358,6 @@ def stop_stream(player):
             pass
         player["stream_pid"] = None
 
-def open_browser_window(player):
-    name = player.get("name", "未知")
-    url = player.get("browser_url", "")
-
-    log("系统", f"[新增桌面-步骤0] 开始为选手 {name} 执行新桌面创建流程")
-    log("系统", f"[新增桌面-步骤0] 平台={player['platform']}, URL={url}")
-
-    if not url:
-        log("系统", f"[新增桌面-步骤0-失败] 选手 {name} 没有有效的 URL，流程终止")
-        return
-
-    window_name = f"OBS_Window_{name}"
-    log("系统", f"[新增桌面-步骤0] 目标窗口标题: {window_name}")
-
-    kbd = keyboard.Controller()
-
-    # 步骤1: 创建新桌面 (Win+Ctrl+D)，系统会自动切换到新桌面
-    log("系统", f"[新增桌面-步骤1] 模拟 Win+Ctrl+D 创建新桌面...")
-    try:
-        kbd.press(keyboard.Key.cmd)
-        kbd.press(keyboard.Key.ctrl)
-        kbd.press('d')
-        kbd.release('d')
-        kbd.release(keyboard.Key.ctrl)
-        kbd.release(keyboard.Key.cmd)
-        log("系统", f"[新增桌面-步骤1-完成] 新桌面已创建，当前应已切换到新桌面")
-    except Exception as e:
-        log("系统", f"[新增桌面-步骤1-失败] 创建新桌面时出错: {e}")
-
-    log("系统", f"[新增桌面-步骤1] 等待 0.5 秒让桌面切换生效...")
-    time.sleep(0.5)
-
-    # 步骤2: 在新桌面中打开浏览器
-    log("系统", f"[新增桌面-步骤2] 在新桌面中启动 Edge 浏览器: {url}")
-    try:
-        subprocess.Popen(
-            ["start", "msedge", "--new-window", f"--window-name={window_name}", url],
-            shell=True,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-        log("系统", f"[新增桌面-步骤2-完成] 浏览器窗口已启动: {window_name}")
-    except Exception as e:
-        log("系统", f"[新增桌面-步骤2-失败] 启动浏览器时出错: {e}")
-        log("系统", f"[新增桌面-步骤2-失败] 流程终止，请手动检查")
-        return
-
-    log("系统", f"[新增桌面-步骤2] 等待 3 秒让浏览器完全加载...")
-    time.sleep(3)
-
-    # 步骤3: 切回原桌面 (Win+Ctrl+Left)
-    log("系统", f"[新增桌面-步骤3] 模拟 Win+Ctrl+Left 切回主桌面...")
-    try:
-        kbd.press(keyboard.Key.cmd)
-        kbd.press(keyboard.Key.ctrl)
-        kbd.press(keyboard.Key.left)
-        kbd.release(keyboard.Key.left)
-        kbd.release(keyboard.Key.ctrl)
-        kbd.release(keyboard.Key.cmd)
-        log("系统", f"[新增桌面-步骤3-完成] 已切回主桌面")
-    except Exception as e:
-        log("系统", f"[新增桌面-步骤3-失败] 切回主桌面时出错: {e}")
-
-    log("系统", f"[新增桌面-完成] 选手 {name} 的新桌面创建流程结束")
-
 def check_twitch_source(url):
     try:
         p = subprocess.run(f'streamlink {url} best --retry-max 0 --stream-url', shell=True, capture_output=True, timeout=10)
@@ -516,7 +443,7 @@ def start_switcher():
 def get_all_stream_statuses(players):
     active = {}
     for p in players:
-        if p.get("active") and p["platform"] in ("twitch", "douyin"):
+        if p.get("active") and p["platform"] in ("twitch",):
             pid = p.get("stream_pid")
             active[p["name"]] = pid and psutil.pid_exists(pid)
     return active
@@ -528,17 +455,12 @@ def parse_clipboard_url(url_string):
         return None
     douyin_stream_match = re.search(r'https?://(?:pull-flv-[a-z0-9]+\.douyincdn\.com|[\w-]+\.douyinliving\.com)/\S+', clip)
     if douyin_stream_match:
-        return {"platform": "douyin", "douyin_url": douyin_stream_match.group(0), "name": "抖音选手", "hotkey": ""}
+        return {"platform": "douyin", "douyin_url": douyin_stream_match.group(0), "browser_url": "", "name": "抖音选手", "hotkey": ""}
     douyin_match = re.search(r'(https?://(?:live\.douyin|lv\.douyin)\.com/\S+)|(https?://v\.douyin\.com/\S+)', clip)
     if douyin_match:
         url = douyin_match.group(0)
-        try:
-            proc = subprocess.run(f'streamlink {url} best --stream-url', shell=True, capture_output=True, timeout=15, text=True)
-            if proc.returncode == 0 and proc.stdout.strip():
-                return {"platform": "douyin", "douyin_url": proc.stdout.strip(), "name": "抖音选手", "hotkey": ""}
-        except:
-            pass
-        return None
+        log("系统", f"[URL解析] 检测到抖音直播间: {url}，将使用 Browser Source 直接打开")
+        return {"platform": "douyin", "douyin_url": "", "browser_url": url, "name": "抖音选手", "hotkey": ""}
     bili_match = re.search(r'live\.bilibili\.com/(\d+)', clip)
     if bili_match:
         rid = bili_match.group(1)
@@ -637,7 +559,7 @@ class PlayerDialog:
             ttk.Label(self.frame, text="频道名或完整URL:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
             ttk.Entry(self.frame, textvariable=self.twitch_var, width=50).grid(row=0, column=1, padx=5, pady=5)
         elif p == "douyin":
-            ttk.Label(self.frame, text="拉流链接:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+            ttk.Label(self.frame, text="直播间URL:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
             ttk.Entry(self.frame, textvariable=self.douyin_var, width=50).grid(row=0, column=1, padx=5, pady=5)
 
     def ok(self):
@@ -662,7 +584,7 @@ class PlayerDialog:
             "twitch_url": self.twitch_var.get().strip() if self.plat_var.get() == "twitch" else "",
             "douyin_url": self.douyin_var.get().strip() if self.plat_var.get() == "douyin" else "",
             "quality": self.qual_var.get(),
-            "browser_url": self.url_var.get().strip() if self.plat_var.get() in ("bilibili", "custom_web") else ""
+            "browser_url": self.url_var.get().strip() if self.plat_var.get() in ("bilibili", "custom_web") else (self.douyin_var.get().strip() if self.plat_var.get() == "douyin" else "")
         }
         self.top.destroy()
 
@@ -771,7 +693,7 @@ class MonitorWindow:
         return cols, cell_w, cell_h
 
     def refresh(self):
-        active = [p for p in self.app.active_players if p.get("active") and p["platform"] in ("twitch", "douyin")]
+        active = [p for p in self.app.active_players if p.get("active") and p["platform"] in ("twitch",)]
         old_names = {p["name"] for p in self.players}
         new_names = {p["name"] for p in active}
 
@@ -1277,7 +1199,7 @@ class ManagerApp:
         if not selected:
             messagebox.showinfo("提示", "请先在视角列表中勾选选手")
             return
-        to_activate = [p for p in selected if p["platform"] in ("twitch", "douyin") and not p["active"]]
+        to_activate = [p for p in selected if p["platform"] in ("twitch",) and not p["active"]]
         if not to_activate:
             messagebox.showinfo("提示", "所选选手无需上源或平台不支持")
             return
@@ -1296,7 +1218,7 @@ class ManagerApp:
         if not selected:
             messagebox.showinfo("提示", "请先在视角列表中勾选选手")
             return
-        to_deactivate = [p for p in selected if p["platform"] in ("twitch", "douyin") and p["active"]]
+        to_deactivate = [p for p in selected if p["platform"] in ("twitch",) and p["active"]]
         for player in to_deactivate:
             self.deactivate_player(player)
         self.active_tree.clear_checked()
@@ -1310,7 +1232,7 @@ class ManagerApp:
         self.store_tree.set_checked_by_name(checked_names)
 
     def one_click_activate(self, player):
-        if player["platform"] not in ("twitch", "douyin"):
+        if player["platform"] not in ("twitch",):
             messagebox.showinfo("提示", "该平台不支持直接上源")
             return
         self.move_to_active(player)
@@ -1325,13 +1247,8 @@ class ManagerApp:
                 return
             self.active_players.append(player)
         player["active"] = False
-        if player["platform"] in ("twitch", "douyin"):
+        if player["platform"] in ("bilibili", "douyin", "custom_web", "twitch"):
             self.sync_player(player)
-        elif player["platform"] in ("bilibili", "custom_web"):
-            self.sync_player(player)
-            threading.Thread(target=lambda: open_browser_window(player), daemon=True).start()
-        else:
-            pass
         self.save_config()
         self._update_log_combo()
         self.refresh_ui()
@@ -1347,9 +1264,7 @@ class ManagerApp:
                 if player.get("obs_source_name"):
                     self.obs.set_visibility(player["obs_source_name"], False)
                     self.obs.set_mute(player["obs_source_name"], True)
-            # 如果是网页源，静音浏览器窗口
-            if player["platform"] in ("bilibili", "custom_web"):
-                mute_browser_window(player["window_title"], mute=True)
+            # 浏览器源不需要额外静音，OBS 原生 mute 已处理
             stop_stream(player)
             if player["obs_source_name"]:
                 self.obs.remove_source(player["obs_source_name"])
@@ -1376,7 +1291,7 @@ class ManagerApp:
                 if player["platform"] in ("bilibili", "custom_web"):
                     menu.add_command(label="🌐 打开直播间", command=lambda: self.open_player_url(player))
                 menu.add_command(label="📥 添加到视角列表", command=lambda: self.move_to_active(player))
-                if player["platform"] in ("twitch", "douyin"):
+                if player["platform"] in ("twitch",):
                     menu.add_command(label="🚀 一键上源", command=lambda: self.one_click_activate(player))
                 menu.post(event.x_root, event.y_root)
 
@@ -1388,7 +1303,7 @@ class ManagerApp:
             if player:
                 menu = Menu(self.root, tearoff=0)
                 menu.add_command(label="✏ 编辑", command=lambda: self.edit_player(player))
-                if player["platform"] in ("twitch", "douyin"):
+                if player["platform"] in ("twitch",):
                     if player.get("active"):
                         menu.add_command(label="⏸ 下源", command=lambda: self.deactivate_player(player))
                     else:
@@ -1400,8 +1315,7 @@ class ManagerApp:
                     menu.add_command(label="🌐 打开直播间", command=lambda: self.open_player_url(player))
                 menu.add_separator()
                 menu.add_command(label="📤 移回仓库", command=lambda: self.move_to_store(player))
-                if player["platform"] in ("twitch", "douyin"):
-                    menu.add_command(label="🎥 切换到此视角", command=lambda: self.switch_to(player))
+                menu.add_command(label="🎥 切换到此视角", command=lambda: self.switch_to(player))
                 batch_menu = Menu(menu, tearoff=0)
                 selected = self.get_selected_active_players()
                 if selected:
@@ -1413,7 +1327,7 @@ class ManagerApp:
 
     # ---------- 核心操作 ----------
     def activate_player(self, player):
-        if player["platform"] not in ("twitch", "douyin") or player.get("active"):
+        if player["platform"] not in ("twitch",) or player.get("active"):
             return
         if not self.obs or not self.obs.connected:
             messagebox.showwarning("提示", "OBS 未连接，无法上源")
@@ -1438,7 +1352,7 @@ class ManagerApp:
         self.refresh_ui()
 
     def deactivate_player(self, player):
-        if player["platform"] not in ("twitch", "douyin"):
+        if player["platform"] not in ("twitch",):
             return
         if self.get_current_display_name() == player["name"]:
             if player.get("obs_source_name"):
@@ -1451,33 +1365,6 @@ class ManagerApp:
     def switch_to(self, player):
         if not self.obs or not self.obs.connected:
             return
-        if player["platform"] in ("bilibili", "custom_web"):
-            src_name = player.get("obs_source_name")
-            if src_name and self.obs.source_exists(src_name):
-                cur_name = self.get_current_display_name()
-                if cur_name == player["name"]:
-                    return
-                # 静音之前的网页源
-                if cur_name:
-                    prev = self.find_player_in_any(cur_name)
-                    if prev and prev["platform"] in ("bilibili", "custom_web"):
-                        mute_browser_window(prev["window_title"], mute=True)
-                    if prev and prev.get("obs_source_name"):
-                        self.obs.set_mute(prev["obs_source_name"], True)
-                        self.obs.set_visibility(prev["obs_source_name"], False)
-                # 取消静音当前网页源
-                mute_browser_window(player["window_title"], mute=False)
-                self.obs.set_visibility(src_name, True)
-                self.obs.set_mute(src_name, False)
-                log("系统", f"切换视角至 {player['name']} (网页)")
-                self.current_log_player.set(player["name"])
-                self.root.after(1, self.refresh_ui)
-            else:
-                log("系统", f"网页源不存在: {src_name}")
-            return
-
-        if player["platform"] not in ("twitch", "douyin"):
-            return
         cur_name = self.get_current_display_name()
         if cur_name == player["name"]:
             return
@@ -1487,15 +1374,14 @@ class ManagerApp:
             log("系统", f"切换失败，源不存在: {src_name}")
             return
 
-        # 静音之前的网页源（如果有）
-        if cur_name:
-            prev = self.find_player_in_any(cur_name)
-            if prev and prev["platform"] in ("bilibili", "custom_web"):
-                mute_browser_window(prev["window_title"], mute=True)
-            if prev and prev.get("obs_source_name"):
-                self.obs.set_mute(prev["obs_source_name"], True)
-                self.obs.set_visibility(prev["obs_source_name"], False)
+        # 静音并隐藏所有其他源（统一处理所有平台）
+        with self.data_lock:
+            for p in self.active_players:
+                if p.get("obs_source_name") and p["obs_source_name"] != src_name:
+                    self.obs.set_mute(p["obs_source_name"], True)
+                    self.obs.set_visibility(p["obs_source_name"], False)
 
+        # 显示并取消静音目标源
         self.obs.set_visibility(src_name, True)
         self.obs.set_mute(src_name, False)
         log("系统", f"切换视角至 {player['name']}")
@@ -1504,7 +1390,7 @@ class ManagerApp:
         self.root.after(1, self.refresh_ui)
 
     def refresh_player(self, player):
-        if player["platform"] not in ("twitch", "douyin"):
+        if player["platform"] not in ("twitch",):
             return
         if not player.get("active"):
             self.activate_player(player)
@@ -1533,7 +1419,10 @@ class ManagerApp:
     def sync_player(self, player):
         if not self.obs or not self.obs.connected:
             return
-        if player["platform"] in ("twitch", "douyin"):
+        plat = player["platform"]
+
+        # ---------- Twitch: 保持 VLC 源 (RTMP 推流) ----------
+        if plat == "twitch":
             desired = f"{player['name']}_{player['view_label']}_{player['hotkey']}"
             old = player.get("obs_source_name")
             if old and self.obs.source_exists(old):
@@ -1546,21 +1435,30 @@ class ManagerApp:
             elif not self.obs.source_exists(desired):
                 self.obs.create_vlc(desired, f"rtmp://localhost:1935/live/{player['stream_name']}")
             player["obs_source_name"] = desired
-            log("系统", f"sync_player 完成: {player['name']} -> {desired}")
-        elif player["platform"] in ("bilibili", "custom_web"):
+            log("系统", f"sync_player 完成: {player['name']} -> {desired} (推流)")
+
+        # ---------- B站 / 抖音 / 自定义网页: 统一使用 Browser Source ----------
+        elif plat in ("bilibili", "douyin", "custom_web"):
             desired = f"{player['name']}_{player['view_label']}_{player['hotkey']}"
+            # 获取浏览器 URL: 优先用 browser_url, 兜底用 douyin_url
+            url = player.get("browser_url", "") or player.get("douyin_url", "")
+            if not url:
+                log("系统", f"[sync_player-失败] 选手 {player['name']} 没有 browser_url，无法创建浏览器源")
+                return
             old = player.get("obs_source_name")
+            log("系统", f"[sync_player-步骤1] 选手 {player['name']} 平台={plat}, URL={url}")
             if old and self.obs.source_exists(old):
                 if old != desired:
                     if self.obs.source_exists(desired):
                         self.obs.remove_source(desired)
                     if not self.obs.rename_source(old, desired):
                         self.obs.remove_source(old)
-                        self.obs.create_window_capture(desired, window_title=player.get("window_title", ""))
+                        self.obs.create_browser_source(desired, url)
             elif not self.obs.source_exists(desired):
-                self.obs.create_window_capture(desired, window_title=player.get("window_title", ""))
+                log("系统", f"[sync_player-步骤2] 创建浏览器源: {desired}")
+                self.obs.create_browser_source(desired, url)
             player["obs_source_name"] = desired
-            log("系统", f"sync_player 完成: {player['name']} -> {desired} (网页)")
+            log("系统", f"[sync_player-完成] {player['name']} -> {desired} (浏览器源)")
 
     def _cleanup_edge_profiles(self):
         profiles_dir = os.path.join(BASE_DIR, "edge_profiles")
@@ -1599,7 +1497,7 @@ class ManagerApp:
         for p in sorted(self.active_players, key=lambda x: (isinstance(x["view_label"], int), x["view_label"])):
             plat = p["platform"]
             status = "运行中"
-            if plat in ("twitch", "douyin"):
+            if plat in ("twitch",):
                 if p.get("active"):
                     alive = self.stream_status_cache.get(p["name"], True)
                     status = "● 推流中" if alive else "✕ 推流中断"
@@ -1611,7 +1509,7 @@ class ManagerApp:
                         status = "❌ 源不可用"
                     else:
                         status = "⏸ 未检测"
-            elif plat in ("bilibili", "custom_web"):
+            elif plat in ("bilibili", "douyin", "custom_web"):
                 status = "🌐 网页"
             if cur_name == p["name"]:
                 status = "★ 当前视角"
@@ -1702,8 +1600,6 @@ class ManagerApp:
                     self.obs.remove_source(player["obs_source_name"])
                 self.active_players.remove(player)
             self.players.remove(player)
-        if player["platform"] in ("bilibili", "custom_web"):
-            pass  # 浏览器窗口自行关闭
         self.restart_services()
         self.save_config()
         self._update_log_combo()
@@ -1751,7 +1647,7 @@ class ManagerApp:
             while True:
                 if self.auto_detect.get():
                     with self.data_lock:
-                        snapshot = [p for p in self.active_players if p["platform"] in ("twitch", "douyin") and not p["active"]]
+                        snapshot = [p for p in self.active_players if p["platform"] in ("twitch",) and not p["active"]]
                     for p in snapshot:
                         check_source(p)
                 time.sleep(AUTO_DETECT_INTERVAL)
@@ -1785,7 +1681,7 @@ class ManagerApp:
             self.monitor_window.on_close()
 
     def start_process(self, player):
-        if player["platform"] in ("twitch", "douyin") and player.get("active"):
+        if player["platform"] in ("twitch",) and player.get("active"):
             url = f"rtmp://localhost:1935/live/{player['stream_name']}"
             if not self.obs.source_exists(player["obs_source_name"]):
                 self.obs.create_vlc(player["obs_source_name"], url)
@@ -1794,7 +1690,7 @@ class ManagerApp:
             start_stream(player, self.obs)
 
     def stop_process(self, player):
-        if player["platform"] in ("twitch", "douyin") and player.get("active"):
+        if player["platform"] in ("twitch",) and player.get("active"):
             stop_stream(player)
 
     def restart_services(self):
