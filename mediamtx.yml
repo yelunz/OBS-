@@ -17,3 +17,4 @@ paths:
   "live/player12": { source: publisher }
   "live/player13": { source: publisher }
   "live/player14": { source: publisher }
+  "live/player15": { source: publisher }

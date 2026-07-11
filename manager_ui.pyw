@@ -1,4 +1,4 @@
-import json, os, subprocess, sys, time, threading, socket, collections, re, shutil, webbrowser
+import json, os, subprocess, sys, time, threading, socket, collections, re, shutil, webbrowser, base64, io
 import tkinter as tk
 from tkinter import ttk, messagebox, Menu, scrolledtext
 from obswebsocket import obsws, requests
@@ -12,6 +12,14 @@ VLC_AVAILABLE = False
 try:
     import vlc
     VLC_AVAILABLE = True
+except Exception:
+    pass
+
+# ==================== Pillow 模块检测（监视器截图用） ====================
+PIL_AVAILABLE = False
+try:
+    from PIL import Image, ImageTk
+    PIL_AVAILABLE = True
 except Exception:
     pass
 
@@ -183,6 +191,27 @@ class OBSController:
             log("系统", f"[创建浏览器源-步骤2-完成] 浏览器源 {name} 创建成功 ({width}x{height}, 音频独立路由)")
         except Exception as e:
             log("系统", f"[创建浏览器源-步骤2-失败] 浏览器源创建失败: {name} - {e}")
+
+    def get_source_screenshot(self, name, width=480, height=270, quality=50):
+        """
+        获取 OBS 源的截图 (返回 base64 编码的 JPEG 字符串)
+        用于监视器实时预览，降低分辨率以提高帧率
+        """
+        try:
+            resp = self.ws.call(requests.GetSourceScreenshot(
+                sourceName=name,
+                imageFormat="jpeg",
+                imageWidth=width,
+                imageHeight=height,
+                imageCompressionQuality=quality
+            ))
+            img_data = resp.getImageData()
+            if img_data:
+                return img_data  # base64 string, 去掉 "data:image/jpeg;base64," 前缀
+            return None
+        except Exception as e:
+            # 截图失败不频繁打日志，避免刷屏
+            return None
 
     def remove_source(self, name):
         try:
@@ -645,6 +674,15 @@ class MonitorWindow:
         self.cell_height = 200
         self.empty_label = None
 
+        # B站监视器管线 (streamlink + ffmpeg → RTMP)
+        self.bilibili_procs = {}      # name -> (p1, p2) subprocess
+        # 截图监视器 (抖音/自定义网页)
+        self.screenshot_canvases = {}  # name -> canvas
+        self.screenshot_frames = {}    # name -> bytes (latest JPEG frame)
+        self.screenshot_running = {}   # name -> bool
+        self.screenshot_lock = threading.Lock()
+        self.screenshot_render_id = None
+
         if VLC_AVAILABLE:
             try:
                 self.vlc_instance = vlc.Instance("--no-audio", "--intf", "dummy", "--vout", "directx")
@@ -693,7 +731,7 @@ class MonitorWindow:
         return cols, cell_w, cell_h
 
     def refresh(self):
-        active = [p for p in self.app.active_players if p.get("active") and p["platform"] in ("twitch",)]
+        active = [p for p in self.app.active_players if p.get("active") and p["platform"] in ("twitch", "bilibili", "douyin", "custom_web")]
         old_names = {p["name"] for p in self.players}
         new_names = {p["name"] for p in active}
 
@@ -736,16 +774,28 @@ class MonitorWindow:
 
     def _show_grid(self, player):
         name = player["name"]
+        plat = player["platform"]
+        log("系统", f"[监视器-显示-步骤1] 平台={plat}, 选手={name}")
+
         if name in self.paused_players:
             data = self.paused_players.pop(name)
             frame, canvas, label = data["frame"], data["canvas"], data["label"]
             self.grid_widgets[name] = (frame, canvas, label)
             mp = data.get("mp")
             if mp:
-                mp.play()
+                try:
+                    mp.play()
+                except:
+                    pass
+            log("系统", f"[监视器-显示-步骤2] 从暂停恢复: {name}")
+            # B站恢复后需重启管线
+            if plat == "bilibili":
+                self._start_bilibili_pipeline(name, canvas)
             return
+
         if name in self.grid_widgets:
             return
+
         frame = ttk.Frame(self.container, borderwidth=1, relief=tk.SUNKEN)
         canvas = tk.Canvas(frame, bg="black")
         name_label = tk.Label(frame, text=name, bg="#333333", fg="white", font=("微软雅黑", 9))
@@ -753,18 +803,47 @@ class MonitorWindow:
         canvas.place(x=0, y=0, width=100, height=75)
         name_label.place(x=0, y=75, width=100, height=25)
         self.grid_widgets[name] = (frame, canvas, name_label)
+        log("系统", f"[监视器-显示-步骤3] 创建网格: {name}")
 
-        if name not in self.vlc_instances:
-            default_sn = f"player{player['id']}"
-            stream_name = player.get("stream_name", default_sn)
-            rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
-            self.win.after(2000, self._start_vlc, name, canvas, rtmp_url)
+        if plat == "twitch":
+            # Twitch: VLC 播放已有 RTMP 流
+            if name not in self.vlc_instances:
+                default_sn = f"player{player['id']}"
+                stream_name = player.get("stream_name", default_sn)
+                rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
+                self.win.after(2000, self._start_vlc, name, canvas, rtmp_url)
+                log("系统", f"[监视器-显示-Twitch] 安排 VLC 启动: {name} -> {rtmp_url}")
+
+        elif plat == "bilibili":
+            # B站: streamlink + ffmpeg → RTMP → VLC
+            if name not in self.vlc_instances:
+                self._start_bilibili_pipeline(name, canvas)
+                log("系统", f"[监视器-显示-B站] 启动 streamlink 管线: {name}")
+
+        elif plat in ("douyin", "custom_web"):
+            # 抖音/自定义网页: OBS 截图轮询
+            if PIL_AVAILABLE:
+                self._start_screenshot_monitor(name, canvas)
+                log("系统", f"[监视器-显示-截图] 启动截图轮询: {name}")
+            else:
+                log("系统", f"[监视器-显示-截图-失败] Pillow 未安装，无法截图预览: {name}")
+                canvas.create_text(150, 100, text="Pillow 未安装", fill="gray", font=("微软雅黑", 10))
 
     def _hide_grid(self, name):
         if name not in self.grid_widgets:
             return
         frame, canvas, label = self.grid_widgets.pop(name)
         frame.place_forget()
+        log("系统", f"[监视器-隐藏] 隐藏网格: {name}")
+
+        # 停止 B站管线
+        if name in self.bilibili_procs:
+            self._stop_bilibili_pipeline(name)
+
+        # 停止截图轮询
+        if name in self.screenshot_running:
+            self._stop_screenshot_monitor(name)
+
         if name in self.vlc_instances:
             inst, mp, _ = self.vlc_instances[name]
             try:
@@ -799,7 +878,167 @@ class MonitorWindow:
         except Exception as e:
             log("系统", f"监视器启动失败 {name}: {e}")
 
+    # ==================== B站监视器管线 ====================
+    def _start_bilibili_pipeline(self, name, canvas):
+        """启动 B站 streamlink + ffmpeg → RTMP 管线"""
+        log("系统", f"[监视器-B站-步骤1] 查找选手 {name} 的 URL")
+        player = next((p for p in self.app.active_players if p["name"] == name), None)
+        if not player:
+            log("系统", f"[监视器-B站-失败] 未找到活跃选手: {name}")
+            return
+        url = player.get("browser_url", "")
+        if not url:
+            log("系统", f"[监视器-B站-失败] {name} 没有 browser_url")
+            return
+
+        stream_name = f"monitor_{name}"
+        rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
+        log("系统", f"[监视器-B站-步骤2] URL={url}, RTMP={rtmp_url}")
+
+        # 确保 MediaMTX 运行
+        global mediamtx_proc
+        if not mediamtx_proc or mediamtx_proc.poll() is not None:
+            log("系统", f"[监视器-B站-步骤3] 启动 MediaMTX")
+            start_mediamtx()
+        wait_for_mediamtx()
+
+        try:
+            log("系统", f"[监视器-B站-步骤4] 启动 streamlink + ffmpeg 管线")
+            cmd1 = ["streamlink", url, "best", "--retry-max", "5", "--retry-streams", "5", "-O"]
+            cmd2 = [FFMPEG, "-re", "-i", "pipe:0", "-c", "copy", "-f", "flv", rtmp_url]
+            p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+            p2 = subprocess.Popen(cmd2, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+            p1.stdout.close()
+            self.bilibili_procs[name] = (p1, p2)
+            log("系统", f"[监视器-B站-步骤5] 管线已启动: {name}")
+        except Exception as e:
+            log("系统", f"[监视器-B站-失败] 启动管线异常: {name} - {e}")
+            return
+
+        # 延迟启动 VLC（等待管线推流稳定）
+        self.win.after(3000, self._start_vlc, name, canvas, rtmp_url)
+        log("系统", f"[监视器-B站-步骤6] 安排 VLC 启动: {name}")
+
+    def _stop_bilibili_pipeline(self, name):
+        """停止 B站 streamlink 管线"""
+        log("系统", f"[监视器-B站-停止] 停止管线: {name}")
+        if name in self.bilibili_procs:
+            p1, p2 = self.bilibili_procs.pop(name)
+            for proc in (p1, p2):
+                try:
+                    proc.terminate()
+                except:
+                    pass
+            log("系统", f"[监视器-B站-停止] 管线已终止: {name}")
+
+    # ==================== 截图监视器 (抖音/自定义网页) ====================
+    def _start_screenshot_monitor(self, name, canvas):
+        """启动 OBS 截图轮询线程"""
+        log("系统", f"[监视器-截图-步骤1] 开始截图轮询: {name}")
+        self.screenshot_canvases[name] = canvas
+        self.screenshot_running[name] = True
+        t = threading.Thread(target=self._screenshot_thread, args=(name,), daemon=True)
+        t.start()
+        log("系统", f"[监视器-截图-步骤2] 截图线程已启动: {name}")
+        # 启动渲染循环（如果尚未启动）
+        self._ensure_screenshot_render_loop()
+
+    def _stop_screenshot_monitor(self, name):
+        """停止截图轮询"""
+        log("系统", f"[监视器-截图-停止] 停止截图轮询: {name}")
+        self.screenshot_running[name] = False
+        self.screenshot_canvases.pop(name, None)
+        with self.screenshot_lock:
+            self.screenshot_frames.pop(name, None)
+
+    def _screenshot_thread(self, name):
+        """截图轮询线程: 持续调用 GetSourceScreenshot，存储最新帧"""
+        log("系统", f"[监视器-截图-线程] 线程启动: {name}")
+        fail_count = 0
+        while self.screenshot_running.get(name, False) and self.win.winfo_exists():
+            try:
+                obs = self.app.obs
+                if not obs or not obs.connected:
+                    time.sleep(0.5)
+                    continue
+
+                # 获取选手的 OBS 源名称
+                player = next((p for p in self.app.active_players if p["name"] == name), None)
+                if not player:
+                    time.sleep(0.5)
+                    continue
+                src_name = player.get("obs_source_name", "")
+                if not src_name:
+                    time.sleep(0.5)
+                    continue
+
+                # 调用截图 API (480x270, JPEG 质量 50)
+                img_b64 = obs.get_source_screenshot(src_name, 480, 270, 50)
+                if img_b64:
+                    # 去掉可能的 data:image/jpeg;base64, 前缀
+                    if img_b64.startswith("data:"):
+                        img_b64 = img_b64.split(",", 1)[-1]
+                    img_bytes = base64.b64decode(img_b64)
+                    with self.screenshot_lock:
+                        self.screenshot_frames[name] = img_bytes
+                    fail_count = 0
+                else:
+                    fail_count += 1
+                    if fail_count == 1:
+                        log("系统", f"[监视器-截图-线程] {name} 截图返回空 (源可能尚未就绪)")
+            except Exception as e:
+                fail_count += 1
+                if fail_count == 1:
+                    log("系统", f"[监视器-截图-线程] {name} 截图异常: {e}")
+
+            # 约 30fps (33ms)
+            time.sleep(0.033)
+
+        log("系统", f"[监视器-截图-线程] 线程退出: {name}")
+
+    def _ensure_screenshot_render_loop(self):
+        """确保截图渲染循环在运行"""
+        if self.screenshot_render_id is not None:
+            return
+        self._screenshot_render_loop()
+
+    def _screenshot_render_loop(self):
+        """主线程渲染循环: 每 33ms 将最新截图帧渲染到 Canvas"""
+        if not self.win.winfo_exists():
+            self.screenshot_render_id = None
+            return
+
+        with self.screenshot_lock:
+            items = list(self.screenshot_frames.items())
+
+        for name, img_bytes in items:
+            canvas = self.screenshot_canvases.get(name)
+            if not canvas or not canvas.winfo_exists():
+                with self.screenshot_lock:
+                    self.screenshot_frames.pop(name, None)
+                continue
+            try:
+                w = canvas.winfo_width()
+                h = canvas.winfo_height()
+                if w > 1 and h > 1:
+                    pil_img = Image.open(io.BytesIO(img_bytes))
+                    pil_img = pil_img.resize((w, h), Image.LANCZOS)
+                    photo = ImageTk.PhotoImage(pil_img)
+                    canvas.delete("all")
+                    canvas.create_image(0, 0, anchor=tk.NW, image=photo)
+                    # 保持引用防止 GC
+                    canvas._photo_ref = photo
+            except Exception:
+                pass
+
+        # 继续渲染循环
+        if self.screenshot_canvases:
+            self.screenshot_render_id = self.win.after(33, self._screenshot_render_loop)
+        else:
+            self.screenshot_render_id = None
+
     def refresh_all(self):
+        log("系统", "[监视器-刷新所有] 停止所有 VLC 实例")
         for name in list(self.vlc_instances.keys()):
             _, mp, _ = self.vlc_instances.pop(name)
             try:
@@ -807,6 +1046,12 @@ class MonitorWindow:
                 mp.release()
             except:
                 pass
+        # 停止所有 B站管线
+        for name in list(self.bilibili_procs.keys()):
+            self._stop_bilibili_pipeline(name)
+        # 停止所有截图轮询
+        for name in list(self.screenshot_running.keys()):
+            self._stop_screenshot_monitor(name)
         self.refresh()
 
     def _start_mouse_listener(self):
@@ -833,9 +1078,21 @@ class MonitorWindow:
         self.mouse_listener.start()
 
     def on_close(self):
+        log("系统", "[监视器-关闭] 开始清理资源")
         if self.mouse_listener:
             self.mouse_listener.stop()
             self.mouse_listener = None
+        # 停止截图渲染循环
+        if self.screenshot_render_id:
+            self.win.after_cancel(self.screenshot_render_id)
+            self.screenshot_render_id = None
+        # 停止所有截图轮询线程
+        for name in list(self.screenshot_running.keys()):
+            self._stop_screenshot_monitor(name)
+        # 停止所有 B站管线
+        for name in list(self.bilibili_procs.keys()):
+            self._stop_bilibili_pipeline(name)
+        # 停止所有 VLC 实例
         for name in list(self.vlc_instances.keys()):
             _, mp, _ = self.vlc_instances[name]
             try:
@@ -854,7 +1111,11 @@ class MonitorWindow:
                 pass
             data["frame"].destroy()
         self.paused_players.clear()
+        self.screenshot_canvases.clear()
+        self.screenshot_frames.clear()
+        self.bilibili_procs.clear()
         self.win.destroy()
+        log("系统", "[监视器-关闭] 资源清理完成")
 
     def update_if_open(self):
         if self.win and self.win.winfo_exists():

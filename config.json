@@ -37,7 +37,7 @@
             "stream_name": "player2",
             "obs_source_name": "lyasyaa_2_2",
             "active": false,
-            "source_ok": false,
+            "source_ok": null,
             "stream_pid": null,
             "window_title": "OBS_Window_lyasyaa"
         },
@@ -55,7 +55,7 @@
             "stream_name": "player3",
             "obs_source_name": "emi_mge7_3_3",
             "active": false,
-            "source_ok": false,
+            "source_ok": null,
             "stream_pid": null,
             "window_title": "OBS_Window_emi_mge7"
         },
@@ -91,7 +91,7 @@
             "stream_name": "player5",
             "obs_source_name": "ghostiexuwu_5_5",
             "active": false,
-            "source_ok": false,
+            "source_ok": null,
             "stream_pid": null,
             "window_title": "OBS_Window_ghostiexuwu"
         },
@@ -109,7 +109,7 @@
             "stream_name": "player6",
             "obs_source_name": "seoi1016_6_6",
             "active": false,
-            "source_ok": false,
+            "source_ok": null,
             "stream_pid": null,
             "window_title": "OBS_Window_seoi1016"
         },
@@ -256,6 +256,42 @@
             "source_ok": null,
             "stream_pid": null,
             "window_title": "OBS_Window_猫猫"
+        },
+        {
+            "id": 15,
+            "name": "自定义网页",
+            "hotkey": "0",
+            "platform": "custom_web",
+            "room_id": "",
+            "twitch_url": "",
+            "douyin_url": "",
+            "quality": "best",
+            "browser_url": "https://www.douyin.com/vsdetail/7660261462153876480",
+            "view_label": 15,
+            "stream_name": "player15",
+            "obs_source_name": "",
+            "active": false,
+            "source_ok": null,
+            "stream_pid": null,
+            "window_title": "OBS_Window_自定义网页"
+        },
+        {
+            "name": "抖音测试",
+            "hotkey": "f",
+            "platform": "douyin",
+            "room_id": "",
+            "twitch_url": "",
+            "douyin_url": "https://live.douyin.com/497801952227?from_search=true&is_aweme_tied=1&search_id=202607112022575A9650F10C629861BA3C&search_result_id=7661243272215448858",
+            "quality": "best",
+            "browser_url": "https://live.douyin.com/497801952227?from_search=true&is_aweme_tied=1&search_id=202607112022575A9650F10C629861BA3C&search_result_id=7661243272215448858",
+            "id": 16,
+            "view_label": 16,
+            "stream_name": "player16",
+            "active": false,
+            "source_ok": null,
+            "stream_pid": null,
+            "obs_source_name": "抖音测试_16_f",
+            "window_title": "OBS_Window_抖音测试"
         }
     ],
     "scene_name": "多视角切换"
