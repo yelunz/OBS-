@@ -456,10 +456,10 @@ def parse_clipboard_url(url_string):
     douyin_stream_match = re.search(r'https?://(?:pull-flv-[a-z0-9]+\.douyincdn\.com|[\w-]+\.douyinliving\.com)/\S+', clip)
     if douyin_stream_match:
         return {"platform": "douyin", "douyin_url": douyin_stream_match.group(0), "browser_url": "", "name": "抖音选手", "hotkey": ""}
-    douyin_match = re.search(r'(https?://(?:live\.douyin|lv\.douyin)\.com/\S+)|(https?://v\.douyin\.com/\S+)', clip)
+    douyin_match = re.search(r'https?://(?:live\.douyin|www\.douyin|lv\.douyin|v\.douyin)\.com/\S+', clip)
     if douyin_match:
         url = douyin_match.group(0)
-        log("系统", f"[URL解析] 检测到抖音直播间: {url}，将使用 Browser Source 直接打开")
+        log("系统", f"[URL解析-步骤1] 检测到抖音直播间: {url}，将使用 Browser Source 直接打开")
         return {"platform": "douyin", "douyin_url": "", "browser_url": url, "name": "抖音选手", "hotkey": ""}
     bili_match = re.search(r'live\.bilibili\.com/(\d+)', clip)
     if bili_match:
