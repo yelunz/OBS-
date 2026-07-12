@@ -1431,42 +1431,260 @@ class ManagerApp:
             log("系统", f"场景设置失败: {e}")
 
     def create_widgets(self):
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=0)
-        self.root.rowconfigure(1, weight=1)
-        self.root.rowconfigure(2, weight=1)
-        self.root.rowconfigure(3, weight=0)
+        # ==================== 根布局 ====================
+        self.root.columnconfigure(0, weight=0)  # sidebar
+        self.root.columnconfigure(1, weight=1)  # content
+        self.root.rowconfigure(0, weight=0)     # header
+        self.root.rowconfigure(1, weight=1)     # main area
+        self.root.rowconfigure(2, weight=0)     # statusbar
 
-        toolbar = ctk.CTkFrame(self.root, fg_color=CARD_BG, corner_radius=10)
-        toolbar.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(10, 0))
-        ctk.CTkButton(toolbar, text="➕ 添加选手", command=self.add, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
-        ctk.CTkButton(toolbar, text="📋 快速添加", command=self.quick_add, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
-        ctk.CTkButton(toolbar, text="📥 批量导入", command=self.bulk_import_window, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
-        ctk.CTkCheckBox(toolbar, text="自动检测源状态", variable=self.auto_detect).pack(side=tk.LEFT, padx=10)
-        ctk.CTkButton(toolbar, text="🔄 重连 OBS", command=self.reconnect_obs, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
-        ctk.CTkButton(toolbar, text="🔁 重启服务", command=self.restart_services, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
-        ctk.CTkButton(toolbar, text="🖥 监视器", command=self.toggle_monitor, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
-        ctk.CTkButton(toolbar, text="❓ 帮助", command=self.show_help, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
-        ctk.CTkButton(toolbar, text="📤 批量添加到视角", command=self.batch_move_to_active, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
-        ctk.CTkButton(toolbar, text="▶ 批量上源", command=self.batch_activate, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
-        ctk.CTkButton(toolbar, text="⏸ 批量下源", command=self.batch_deactivate, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
-        self.obs_status_label = ctk.CTkLabel(toolbar, text="OBS: 检测中", text_color="orange")
-        self.obs_status_label.pack(side=tk.RIGHT, padx=5)
+        self._nav_buttons = {}
+        self._pages = {}
 
-        main = ctk.CTkFrame(self.root, fg_color="transparent")
-        main.grid(row=1, column=0, padx=10, pady=5, sticky=tk.NSEW)
-        main.columnconfigure(0, weight=3)
-        main.columnconfigure(1, weight=1)
-        main.rowconfigure(0, weight=1)
-        main.rowconfigure(1, weight=1)
+        # --- Header ---
+        header = self._create_header()
+        header.grid(row=0, column=0, columnspan=2, sticky=tk.EW)
 
-        store_frame = ctk.CTkFrame(main, fg_color=CARD_BG, corner_radius=10)
-        store_frame.grid(row=0, column=0, sticky=tk.NSEW)
-        store_frame.columnconfigure(0, weight=1)
-        store_frame.rowconfigure(0, weight=0)
-        store_frame.rowconfigure(1, weight=1)
-        ctk.CTkLabel(store_frame, text="选手仓库 (勾选即可多选)", font=("微软雅黑", 10, "bold"), text_color=TEXT_PRIMARY).grid(row=0, column=0, sticky=tk.W, padx=5, pady=(5, 0))
-        self.store_tree = CheckboxTreeview(store_frame, columns=("sel", "name", "platform", "status", "key"),
+        # --- Sidebar ---
+        sidebar = self._create_sidebar()
+        sidebar.grid(row=1, column=0, sticky=tk.NS)
+
+        # --- Content Area ---
+        self._content_frame = ctk.CTkFrame(self.root, fg_color="transparent")
+        self._content_frame.grid(row=1, column=1, sticky=tk.NSEW)
+        self._content_frame.columnconfigure(0, weight=1)
+        self._content_frame.rowconfigure(0, weight=1)
+
+        # 创建各页面
+        self._pages["dashboard"] = self._create_dashboard_page()
+        self._pages["players"] = self._create_players_page()
+        self._pages["monitor"] = self._create_monitor_page()
+        self._pages["logs"] = self._create_logs_page()
+
+        # 将所有页面叠放在 content frame 中
+        for name, page in self._pages.items():
+            page.grid(row=0, column=0, sticky=tk.NSEW)
+
+        # --- StatusBar ---
+        statusbar = self._create_statusbar()
+        statusbar.grid(row=2, column=0, columnspan=2, sticky=tk.EW)
+
+        # 默认显示仪表盘
+        self._show_page("dashboard")
+
+    # ==================== 布局辅助方法 ====================
+
+    def _create_header(self):
+        """创建顶部 Header 栏"""
+        header = ctk.CTkFrame(self.root, fg_color=CARD_BG, corner_radius=0, height=48)
+        header.grid_propagate(False)
+        header.columnconfigure(0, weight=1)
+        header.columnconfigure(1, weight=0)
+        header.columnconfigure(2, weight=0)
+
+        title = ctk.CTkLabel(header, text="多视角切换管理器 Pro",
+                             font=("微软雅黑", 14, "bold"), text_color=ACCENT)
+        title.grid(row=0, column=0, sticky=tk.W, padx=15, pady=10)
+
+        self.obs_status_label = ctk.CTkLabel(header, text="OBS: 检测中",
+                                             text_color="orange", font=("微软雅黑", 10))
+        self.obs_status_label.grid(row=0, column=1, sticky=tk.E, padx=(0, 5))
+
+        settings_btn = ctk.CTkButton(header, text="⚙", width=32, height=32,
+                                     command=self.show_settings,
+                                     fg_color="transparent", hover_color=ELEVATED_BG,
+                                     text_color=TEXT_SECONDARY)
+        settings_btn.grid(row=0, column=2, sticky=tk.E, padx=(0, 10))
+
+        return header
+
+    def _create_sidebar(self):
+        """创建左侧导航栏"""
+        sidebar = ctk.CTkFrame(self.root, fg_color="#0A0D12", corner_radius=0, width=200)
+        sidebar.grid_propagate(False)
+        sidebar.columnconfigure(0, weight=1)
+
+        # Logo 区域
+        logo = ctk.CTkLabel(sidebar, text="🎬", font=("微软雅黑", 28))
+        logo.grid(row=0, column=0, pady=(20, 15))
+
+        # 导航项
+        nav_items = [
+            ("dashboard", "📊  仪表盘"),
+            ("players", "👥  选手管理"),
+            ("monitor", "🖥  监视器"),
+            ("logs", "📋  日志"),
+        ]
+
+        row_idx = 1
+        for key, label in nav_items:
+            btn = ctk.CTkButton(sidebar, text=label, anchor="w",
+                                fg_color="transparent", hover_color=ELEVATED_BG,
+                                text_color=TEXT_SECONDARY, font=("微软雅黑", 11),
+                                corner_radius=6, height=36,
+                                command=lambda k=key: self._show_page(k))
+            btn.grid(row=row_idx, column=0, sticky=tk.EW, padx=8, pady=1)
+            self._nav_buttons[key] = btn
+            row_idx += 1
+
+        # 分隔线
+        separator = ctk.CTkFrame(sidebar, fg_color=BORDER, height=1, corner_radius=0)
+        separator.grid(row=row_idx, column=0, sticky=tk.EW, padx=12, pady=(15, 10))
+        row_idx += 1
+
+        # Web 遥控标签
+        web_label = ctk.CTkLabel(sidebar, text="Web遥控", font=("微软雅黑", 9),
+                                 text_color=TEXT_SECONDARY)
+        web_label.grid(row=row_idx, column=0, sticky=tk.W, padx=15, pady=(0, 2))
+        row_idx += 1
+
+        self.web_url_label = ctk.CTkLabel(sidebar, text=":5000",
+                                          font=("微软雅黑", 9, "bold"), text_color=ACCENT)
+        self.web_url_label.grid(row=row_idx, column=0, sticky=tk.W, padx=15)
+
+        return sidebar
+
+    def _create_dashboard_page(self):
+        """创建仪表盘页面"""
+        page = ctk.CTkFrame(self._content_frame, fg_color="transparent")
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(0, weight=0)  # 统计卡片
+        page.rowconfigure(1, weight=0)  # 当前视角
+        page.rowconfigure(2, weight=1)  # 活跃池
+        page.rowconfigure(3, weight=0)  # 操作按钮
+
+        # ---- 统计卡片行 ----
+        stats_frame = ctk.CTkFrame(page, fg_color="transparent")
+        stats_frame.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(10, 5))
+        for i in range(4):
+            stats_frame.columnconfigure(i, weight=1)
+
+        # 卡片1: 活跃选手数
+        card1 = ctk.CTkFrame(stats_frame, fg_color=CARD_BG, corner_radius=12)
+        card1.grid(row=0, column=0, sticky=tk.NSEW, padx=(0, 5))
+        self._stats_active_count = ctk.CTkLabel(card1, text=str(len(self.active_players)),
+                                                font=("微软雅黑", 28, "bold"), text_color=ACCENT)
+        self._stats_active_count.pack(pady=(15, 0))
+        ctk.CTkLabel(card1, text="活跃选手", font=("微软雅黑", 9),
+                     text_color=TEXT_SECONDARY).pack(pady=(0, 12))
+
+        # 卡片2: OBS 状态
+        card2 = ctk.CTkFrame(stats_frame, fg_color=CARD_BG, corner_radius=12)
+        card2.grid(row=0, column=1, sticky=tk.NSEW, padx=5)
+        self._stats_obs = ctk.CTkLabel(card2, text="检测中",
+                                       font=("微软雅黑", 28, "bold"), text_color=WARNING)
+        self._stats_obs.pack(pady=(15, 0))
+        ctk.CTkLabel(card2, text="OBS 状态", font=("微软雅黑", 9),
+                     text_color=TEXT_SECONDARY).pack(pady=(0, 12))
+
+        # 卡片3: 当前视角
+        card3 = ctk.CTkFrame(stats_frame, fg_color=CARD_BG, corner_radius=12)
+        card3.grid(row=0, column=2, sticky=tk.NSEW, padx=5)
+        self._stats_current = ctk.CTkLabel(card3, text="无",
+                                           font=("微软雅黑", 28, "bold"), text_color=ACCENT)
+        self._stats_current.pack(pady=(15, 0))
+        ctk.CTkLabel(card3, text="当前视角", font=("微软雅黑", 9),
+                     text_color=TEXT_SECONDARY).pack(pady=(0, 12))
+
+        # 卡片4: 快捷键数
+        card4 = ctk.CTkFrame(stats_frame, fg_color=CARD_BG, corner_radius=12)
+        card4.grid(row=0, column=3, sticky=tk.NSEW, padx=(5, 0))
+        hotkey_count = len([p for p in self.players if p.get("hotkey")])
+        self._stats_hotkeys = ctk.CTkLabel(card4, text=str(hotkey_count),
+                                           font=("微软雅黑", 28, "bold"), text_color=ACCENT)
+        self._stats_hotkeys.pack(pady=(15, 0))
+        ctk.CTkLabel(card4, text="快捷键数", font=("微软雅黑", 9),
+                     text_color=TEXT_SECONDARY).pack(pady=(0, 12))
+
+        # ---- 当前视角大卡片 ----
+        cur_frame = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12)
+        cur_frame.grid(row=1, column=0, sticky=tk.EW, padx=10, pady=(5, 5))
+        ctk.CTkLabel(cur_frame, text="当前视角", font=("微软雅黑", 10, "bold"),
+                     text_color=TEXT_SECONDARY).pack(pady=(10, 0))
+        self.cur_label = ctk.CTkLabel(cur_frame, text="无", font=("微软雅黑", 20, "bold"),
+                                      text_color=ACCENT)
+        self.cur_label.pack(pady=(5, 15))
+
+        # ---- 活跃池列表 ----
+        pool_frame = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12)
+        pool_frame.grid(row=2, column=0, sticky=tk.NSEW, padx=10, pady=5)
+        pool_frame.columnconfigure(0, weight=1)
+        pool_frame.rowconfigure(0, weight=0)
+        pool_frame.rowconfigure(1, weight=1)
+        self.pool_label = ctk.CTkLabel(pool_frame, text=f"活跃池 (最多{self.max_streams}个)",
+                                       font=("微软雅黑", 10, "bold"), text_color=TEXT_PRIMARY)
+        self.pool_label.grid(row=0, column=0, sticky=tk.W, padx=10, pady=(10, 5))
+        self.pool_list = tk.Listbox(pool_frame, height=6, font=("微软雅黑", 10),
+                                    bg=PAGE_BG, fg=TEXT_PRIMARY, selectbackground=ACCENT)
+        self.pool_list.grid(row=1, column=0, sticky=tk.NSEW, padx=10, pady=(0, 10))
+
+        # ---- 操作按钮区 ----
+        btn_frame = ctk.CTkFrame(page, fg_color="transparent")
+        btn_frame.grid(row=3, column=0, sticky=tk.EW, padx=10, pady=(5, 10))
+
+        # 第一行
+        btn_row1 = ctk.CTkFrame(btn_frame, fg_color="transparent")
+        btn_row1.pack(fill=tk.X, pady=(0, 5))
+        ctk.CTkButton(btn_row1, text="➕ 添加选手", command=self.add,
+                      corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(btn_row1, text="📋 快速添加", command=self.quick_add,
+                      corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(btn_row1, text="📥 批量导入", command=self.bulk_import_window,
+                      corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(btn_row1, text="📤 批量添加到视角", command=self.batch_move_to_active,
+                      corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(btn_row1, text="▶ 批量上源", command=self.batch_activate,
+                      corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+
+        # 第二行
+        btn_row2 = ctk.CTkFrame(btn_frame, fg_color="transparent")
+        btn_row2.pack(fill=tk.X)
+        ctk.CTkButton(btn_row2, text="⏸ 批量下源", command=self.batch_deactivate,
+                      corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(btn_row2, text="🔄 重连 OBS", command=self.reconnect_obs,
+                      corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(btn_row2, text="🔁 重启服务", command=self.restart_services,
+                      corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(btn_row2, text="🖥 监视器", command=self.toggle_monitor,
+                      corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(btn_row2, text="❓ 帮助", command=self.show_help,
+                      corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkCheckBox(btn_row2, text="自动检测源状态", variable=self.auto_detect).pack(side=tk.LEFT, padx=10)
+
+        return page
+
+    def _create_players_page(self):
+        """创建选手管理页面"""
+        page = ctk.CTkFrame(self._content_frame, fg_color="transparent")
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(0, weight=1)  # 选手仓库
+        page.rowconfigure(1, weight=0)  # 分隔线
+        page.rowconfigure(2, weight=1)  # 视角列表
+
+        # ---- 选手仓库 ----
+        store_section = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12)
+        store_section.grid(row=0, column=0, sticky=tk.NSEW, padx=10, pady=(10, 5))
+        store_section.columnconfigure(0, weight=1)
+        store_section.rowconfigure(0, weight=0)
+        store_section.rowconfigure(1, weight=1)
+
+        store_header = ctk.CTkFrame(store_section, fg_color="transparent")
+        store_header.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(10, 5))
+        ctk.CTkLabel(store_header, text="选手仓库", font=("微软雅黑", 12, "bold"),
+                     text_color=TEXT_PRIMARY).pack(side=tk.LEFT)
+        ctk.CTkButton(store_header, text="➕ 添加", command=self.add,
+                      corner_radius=6, fg_color=ACCENT, hover_color=ACCENT_HOVER, width=70).pack(side=tk.RIGHT, padx=2)
+        ctk.CTkButton(store_header, text="📋 快速", command=self.quick_add,
+                      corner_radius=6, fg_color=ACCENT, hover_color=ACCENT_HOVER, width=70).pack(side=tk.RIGHT, padx=2)
+        ctk.CTkButton(store_header, text="📥 导入", command=self.bulk_import_window,
+                      corner_radius=6, fg_color=ACCENT, hover_color=ACCENT_HOVER, width=70).pack(side=tk.RIGHT, padx=2)
+
+        store_scroll = ctk.CTkScrollableFrame(store_section, fg_color="transparent")
+        store_scroll.grid(row=1, column=0, sticky=tk.NSEW, padx=5, pady=(0, 10))
+        store_scroll.columnconfigure(0, weight=1)
+        store_scroll.rowconfigure(0, weight=1)
+
+        self.store_tree = CheckboxTreeview(store_scroll, columns=("sel", "name", "platform", "status", "key"),
                                            checkbox_col="#1", show="headings")
         self.store_tree.heading("sel", text="选择")
         self.store_tree.heading("name", text="名称")
@@ -1475,16 +1693,37 @@ class ManagerApp:
         self.store_tree.heading("key", text="键")
         self.store_tree.column("sel", width=40, anchor=tk.CENTER)
         self.store_tree.column("platform", width=60)
-        self.store_tree.grid(row=1, column=0, sticky=tk.NSEW)
+        self.store_tree.grid(row=0, column=0, sticky=tk.NSEW)
         self.store_tree.bind("<Button-3>", self.on_store_right_click)
 
-        active_frame = ctk.CTkFrame(main, fg_color=CARD_BG, corner_radius=10)
-        active_frame.grid(row=1, column=0, sticky=tk.NSEW)
-        active_frame.columnconfigure(0, weight=1)
-        active_frame.rowconfigure(0, weight=0)
-        active_frame.rowconfigure(1, weight=1)
-        ctk.CTkLabel(active_frame, text="视角列表 (勾选即可多选)", font=("微软雅黑", 10, "bold"), text_color=TEXT_PRIMARY).grid(row=0, column=0, sticky=tk.W, padx=5, pady=(5, 0))
-        self.active_tree = CheckboxTreeview(active_frame, columns=("sel", "name", "platform", "source", "status", "key"),
+        # ---- 分隔线 ----
+        sep = ctk.CTkFrame(page, fg_color=BORDER, height=1, corner_radius=0)
+        sep.grid(row=1, column=0, sticky=tk.EW, padx=10)
+
+        # ---- 视角列表 ----
+        active_section = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12)
+        active_section.grid(row=2, column=0, sticky=tk.NSEW, padx=10, pady=(5, 10))
+        active_section.columnconfigure(0, weight=1)
+        active_section.rowconfigure(0, weight=0)
+        active_section.rowconfigure(1, weight=1)
+
+        active_header = ctk.CTkFrame(active_section, fg_color="transparent")
+        active_header.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(10, 5))
+        ctk.CTkLabel(active_header, text="视角列表", font=("微软雅黑", 12, "bold"),
+                     text_color=TEXT_PRIMARY).pack(side=tk.LEFT)
+        ctk.CTkButton(active_header, text="📤 添加到视角", command=self.batch_move_to_active,
+                      corner_radius=6, fg_color=ACCENT, hover_color=ACCENT_HOVER, width=100).pack(side=tk.RIGHT, padx=2)
+        ctk.CTkButton(active_header, text="▶ 上源", command=self.batch_activate,
+                      corner_radius=6, fg_color=ACCENT, hover_color=ACCENT_HOVER, width=70).pack(side=tk.RIGHT, padx=2)
+        ctk.CTkButton(active_header, text="⏸ 下源", command=self.batch_deactivate,
+                      corner_radius=6, fg_color=ACCENT, hover_color=ACCENT_HOVER, width=70).pack(side=tk.RIGHT, padx=2)
+
+        active_scroll = ctk.CTkScrollableFrame(active_section, fg_color="transparent")
+        active_scroll.grid(row=1, column=0, sticky=tk.NSEW, padx=5, pady=(0, 10))
+        active_scroll.columnconfigure(0, weight=1)
+        active_scroll.rowconfigure(0, weight=1)
+
+        self.active_tree = CheckboxTreeview(active_scroll, columns=("sel", "name", "platform", "source", "status", "key"),
                                             checkbox_col="#1", show="headings")
         self.active_tree.heading("sel", text="选择")
         self.active_tree.heading("name", text="名称")
@@ -1494,55 +1733,113 @@ class ManagerApp:
         self.active_tree.heading("key", text="键")
         self.active_tree.column("sel", width=40, anchor=tk.CENTER)
         self.active_tree.column("platform", width=60)
-        self.active_tree.grid(row=1, column=0, sticky=tk.NSEW)
+        self.active_tree.grid(row=0, column=0, sticky=tk.NSEW)
         self.active_tree.bind("<Button-3>", self.on_active_right_click)
 
-        right = ctk.CTkFrame(main, fg_color="transparent")
-        right.grid(row=0, column=1, rowspan=2, sticky=tk.NSEW, padx=(10, 0))
-        right.columnconfigure(0, weight=1)
-        right.rowconfigure(0, weight=0)
-        right.rowconfigure(1, weight=1)
+        return page
 
-        cur_frame = ctk.CTkFrame(right, fg_color=CARD_BG, corner_radius=10)
-        cur_frame.grid(row=0, column=0, sticky=tk.EW, pady=(0, 10))
-        ctk.CTkLabel(cur_frame, text="当前视角", font=("微软雅黑", 10, "bold"), text_color=TEXT_PRIMARY).grid(row=0, column=0, sticky=tk.W, padx=5, pady=(5, 0))
-        self.cur_label = ctk.CTkLabel(cur_frame, text="无", font=("微软雅黑", 16, "bold"), text_color=ACCENT)
-        self.cur_label.grid(row=1, column=0, sticky=tk.EW, ipady=10, padx=5, pady=5)
+    def _create_monitor_page(self):
+        """创建监视器页面"""
+        page = ctk.CTkFrame(self._content_frame, fg_color="transparent")
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(0, weight=1)
 
-        pool_frame = ctk.CTkFrame(right, fg_color=CARD_BG, corner_radius=10)
-        pool_frame.grid(row=1, column=0, sticky=tk.NSEW)
-        pool_frame.columnconfigure(0, weight=1)
-        pool_frame.rowconfigure(0, weight=0)
-        pool_frame.rowconfigure(1, weight=1)
-        pool_frame.rowconfigure(2, weight=0)
-        self.pool_label = ctk.CTkLabel(pool_frame, text=f"活跃池 (最多{self.max_streams}个)", font=("微软雅黑", 10, "bold"), text_color=TEXT_PRIMARY)
-        self.pool_label.grid(row=0, column=0, sticky=tk.W, padx=5, pady=(5, 0))
-        self.pool_list = tk.Listbox(pool_frame, height=6, font=("微软雅黑", 10), bg=PAGE_BG, fg=TEXT_PRIMARY, selectbackground=ACCENT)
-        self.pool_list.grid(row=1, column=0, sticky=tk.NSEW)
-        settings_btn = ctk.CTkButton(pool_frame, text="⚙️", width=3, command=self.show_settings, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER)
-        settings_btn.grid(row=2, column=0, sticky=tk.SE, padx=5, pady=5)
+        # 监视器大卡片
+        card = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12)
+        card.grid(row=0, column=0, sticky=tk.NSEW, padx=10, pady=10)
+        card.columnconfigure(0, weight=1)
 
-        log_frame = ctk.CTkFrame(self.root, fg_color=CARD_BG, corner_radius=10)
-        log_frame.grid(row=2, column=0, padx=10, pady=(5, 5), sticky=tk.NSEW)
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=0)
-        log_frame.rowconfigure(1, weight=0)
-        log_frame.rowconfigure(2, weight=1)
-        ctk.CTkLabel(log_frame, text="选手日志", font=("微软雅黑", 10, "bold"), text_color=TEXT_PRIMARY).grid(row=0, column=0, sticky=tk.W, padx=5, pady=(5, 0))
-        log_selector = ctk.CTkFrame(log_frame, fg_color="transparent")
-        log_selector.grid(row=1, column=0, sticky=tk.EW)
-        ctk.CTkLabel(log_selector, text="查看日志:", text_color=TEXT_SECONDARY).pack(side=tk.LEFT, padx=5)
-        self.log_combo = ctk.CTkComboBox(log_selector, variable=self.current_log_player, state="readonly", values=["系统"])
-        self.log_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        ctk.CTkLabel(card, text="🖥", font=("微软雅黑", 48)).pack(pady=(40, 10))
+        ctk.CTkLabel(card, text="监视器", font=("微软雅黑", 18, "bold"),
+                     text_color=TEXT_PRIMARY).pack()
+        ctk.CTkLabel(card, text="实时监控所有 OBS 画面源状态",
+                     font=("微软雅黑", 10), text_color=TEXT_SECONDARY).pack(pady=(5, 20))
+
+        ctk.CTkButton(card, text="打开监视器", font=("微软雅黑", 12, "bold"),
+                      command=self.toggle_monitor, corner_radius=8, fg_color=ACCENT,
+                      hover_color=ACCENT_HOVER, height=40, width=180).pack(pady=(0, 10))
+
+        ctk.CTkLabel(card, text="需要安装 python-vlc 模块",
+                     font=("微软雅黑", 9), text_color=TEXT_SECONDARY).pack(pady=(0, 30))
+
+        # 服务操作按钮
+        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+        btn_frame.pack(pady=(0, 20))
+        ctk.CTkButton(btn_frame, text="🔄 重连 OBS", command=self.reconnect_obs,
+                      corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=5)
+        ctk.CTkButton(btn_frame, text="🔁 重启服务", command=self.restart_services,
+                      corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=5)
+
+        return page
+
+    def _create_logs_page(self):
+        """创建日志页面"""
+        page = ctk.CTkFrame(self._content_frame, fg_color="transparent")
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(0, weight=0)  # 日志选择器
+        page.rowconfigure(1, weight=1)  # 日志文本
+
+        # ---- 日志选择器 ----
+        log_selector = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12)
+        log_selector.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(10, 5))
+        ctk.CTkLabel(log_selector, text="选手日志", font=("微软雅黑", 12, "bold"),
+                     text_color=TEXT_PRIMARY).pack(side=tk.LEFT, padx=10, pady=10)
+        ctk.CTkLabel(log_selector, text="查看日志:", text_color=TEXT_SECONDARY).pack(side=tk.LEFT, padx=(10, 5))
+        self.log_combo = ctk.CTkComboBox(log_selector, variable=self.current_log_player,
+                                         state="readonly", values=["系统"], width=200)
+        self.log_combo.pack(side=tk.LEFT, padx=5, pady=10)
         self.log_combo.configure(command=lambda v: self._refresh_log_view())
-        self.log_text = ctk.CTkTextbox(log_frame, height=8, font=("Consolas", 9))
+        ctk.CTkCheckBox(log_selector, text="自动检测源状态",
+                        variable=self.auto_detect).pack(side=tk.RIGHT, padx=10, pady=10)
+
+        # ---- 日志文本区域 ----
+        log_frame = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12)
+        log_frame.grid(row=1, column=0, sticky=tk.NSEW, padx=10, pady=5)
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+
+        self.log_text = ctk.CTkTextbox(log_frame, font=("Consolas", 9))
         self.log_text.configure(state="disabled")
-        self.log_text.grid(row=2, column=0, sticky=tk.NSEW)
+        self.log_text.grid(row=0, column=0, sticky=tk.NSEW, padx=5, pady=5)
+
+        return page
+
+    def _create_statusbar(self):
+        """创建底部状态栏"""
+        status_frame = ctk.CTkFrame(self.root, fg_color=CARD_BG, corner_radius=0, height=28)
+        status_frame.grid_propagate(False)
 
         self.status_var = tk.StringVar(value="就绪")
-        status_frame = ctk.CTkFrame(self.root, fg_color=CARD_BG, corner_radius=6)
-        status_frame.grid(row=3, column=0, sticky=tk.EW, padx=10, pady=(0, 5))
-        ctk.CTkLabel(status_frame, textvariable=self.status_var, anchor="w", text_color=TEXT_SECONDARY).pack(fill=tk.X, padx=5, pady=2)
+        status_label = ctk.CTkLabel(status_frame, textvariable=self.status_var, anchor="w",
+                                    text_color=TEXT_SECONDARY, font=("微软雅黑", 9))
+        status_label.pack(side=tk.LEFT, fill=tk.X, padx=10, pady=3)
+
+        # OBS 连接圆点指示
+        self._obs_dot = ctk.CTkLabel(status_frame, text="●", text_color="orange",
+                                     font=("微软雅黑", 9))
+        self._obs_dot.pack(side=tk.RIGHT, padx=(0, 5))
+        ctk.CTkLabel(status_frame, text="OBS", text_color=TEXT_SECONDARY,
+                     font=("微软雅黑", 9)).pack(side=tk.RIGHT, padx=(0, 10))
+
+        # Web 遥控地址
+        ctk.CTkLabel(status_frame, text="Web:", text_color=TEXT_SECONDARY,
+                     font=("微软雅黑", 9)).pack(side=tk.RIGHT, padx=(0, 2))
+        ctk.CTkLabel(status_frame, text="localhost:5000", text_color=ACCENT,
+                     font=("微软雅黑", 9)).pack(side=tk.RIGHT, padx=(0, 10))
+
+        return status_frame
+
+    def _show_page(self, name):
+        """切换主内容区页面"""
+        for page_name, page in self._pages.items():
+            page.grid_remove()
+        if name in self._pages:
+            self._pages[name].grid()
+        for btn_name, btn in self._nav_buttons.items():
+            if btn_name == name:
+                btn.configure(fg_color=ACCENT, text_color="#FFFFFF")
+            else:
+                btn.configure(fg_color="transparent", text_color=TEXT_SECONDARY)
 
     # ---------- 辅助获取勾选 ----------
     def get_selected_store_players(self):
