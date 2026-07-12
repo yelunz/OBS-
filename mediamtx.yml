@@ -18,6 +18,38 @@ paths:
   "live/player13": { source: publisher }
   "live/player14": { source: publisher }
   "live/player15": { source: publisher }
+  "live/player16": { source: publisher }
   "live/player17": { source: publisher }
-  # 监视器 B站预览管线 (正则匹配 live/monitor_数字)
-  "~live/monitor_\\d+$": { source: publisher }
+  "live/player18": { source: publisher }
+  "live/player19": { source: publisher }
+  "live/player20": { source: publisher }
+  "live/player21": { source: publisher }
+  "live/player22": { source: publisher }
+  "live/player23": { source: publisher }
+  "live/player24": { source: publisher }
+  "live/player25": { source: publisher }
+  "live/player26": { source: publisher }
+  "live/player27": { source: publisher }
+  "live/player28": { source: publisher }
+  "live/player29": { source: publisher }
+  "live/player30": { source: publisher }
+  "live/player31": { source: publisher }
+  "live/player32": { source: publisher }
+  "live/player33": { source: publisher }
+  "live/player34": { source: publisher }
+  "live/player35": { source: publisher }
+  "live/player36": { source: publisher }
+  "live/player37": { source: publisher }
+  "live/player38": { source: publisher }
+  "live/player39": { source: publisher }
+  "live/player40": { source: publisher }
+  "live/player41": { source: publisher }
+  "live/player42": { source: publisher }
+  "live/player43": { source: publisher }
+  "live/player44": { source: publisher }
+  "live/player45": { source: publisher }
+  "live/player46": { source: publisher }
+  "live/player47": { source: publisher }
+  "live/player48": { source: publisher }
+  "live/player49": { source: publisher }
+  "live/player50": { source: publisher }
