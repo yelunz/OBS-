@@ -1331,6 +1331,7 @@ class ManagerApp:
         self.auto_detect = tk.BooleanVar(value=True)
         self.data_lock = threading.Lock()
         self.current_log_player = tk.StringVar(value="系统")
+        self.status_var = tk.StringVar(value="就绪")
         self.original_scene = None
         self.monitor_window = None
         self.pool_label = None
@@ -1619,9 +1620,9 @@ class ManagerApp:
         actions.grid(row=1, column=0, sticky="ew")
 
         btn_specs = [
-            ("添加选手", self.add_player, ACCENT, ACCENT_HOVER),
-            ("快速添加", self.quick_add_player, ACCENT, ACCENT_HOVER),
-            ("批量导入", self.bulk_import, ELEVATED_BG, CARD_BG),
+            ("添加选手", self.add, ACCENT, ACCENT_HOVER),
+            ("快速添加", self.quick_add, ACCENT, ACCENT_HOVER),
+            ("批量导入", self.bulk_import_window, ELEVATED_BG, CARD_BG),
             ("批量▸视角", self.batch_move_to_active, ELEVATED_BG, CARD_BG),
             ("上源", self.batch_activate, SUCCESS, "#8BCF8A"),
             ("下源", self.batch_deactivate, DANGER, "#E07A8A"),
@@ -1671,14 +1672,15 @@ class ManagerApp:
         store_header.pack(fill=tk.X, padx=12, pady=(10, 4))
         ctk.CTkLabel(store_header, text="选手仓库", font=("微软雅黑", 11, "bold"),
                      text_color=TEXT_PRIMARY).pack(side=tk.LEFT)
-        for t, cmd in [("添加", self.add_player), ("快速", self.quick_add_player), ("导入", self.bulk_import)]:
+        for t, cmd in [("添加", self.add), ("快速", self.quick_add), ("导入", self.bulk_import_window)]:
             ctk.CTkButton(store_header, text=t, command=cmd, corner_radius=6,
                           fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER, text_color=TEXT_PRIMARY,
                           font=("微软雅黑", 9), height=26, width=52).pack(side=tk.RIGHT, padx=(0, 4))
 
         store_scroll = ctk.CTkScrollableFrame(store_section, fg_color="transparent")
         store_scroll.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
-        self.store_tree = CheckboxTreeview(store_scroll)
+        self.store_tree = CheckboxTreeview(store_scroll, columns=("sel", "name", "platform", "status", "key"),
+                                             checkbox_col="#1", show="headings")
         self.store_tree.pack(fill=tk.BOTH, expand=True)
         self.store_tree.bind("<Button-3>", self.on_store_right_click)
 
@@ -1700,7 +1702,8 @@ class ManagerApp:
 
         active_scroll = ctk.CTkScrollableFrame(active_section, fg_color="transparent")
         active_scroll.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
-        self.active_tree = CheckboxTreeview(active_scroll)
+        self.active_tree = CheckboxTreeview(active_scroll, columns=("sel", "name", "platform", "source", "status", "key"),
+                                              checkbox_col="#1", show="headings")
         self.active_tree.pack(fill=tk.BOTH, expand=True)
         self.active_tree.bind("<Button-3>", self.on_active_right_click)
 
@@ -1713,8 +1716,9 @@ class ManagerApp:
         page.columnconfigure(0, weight=1)
         page.rowconfigure(0, weight=1)
 
-        card = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=BORDER)
-        card.place(relx=0.5, rely=0.5, anchor=tk.CENTER, width=400, height=300)
+        card = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=BORDER,
+                         width=400, height=300)
+        card.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
         ctk.CTkLabel(card, text="🖥", font=("微软雅黑", 48)).pack(pady=(30, 0))
         ctk.CTkLabel(card, text="多视角监控", font=("微软雅黑", 18, "bold"),
