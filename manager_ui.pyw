@@ -2315,11 +2315,14 @@ class ManagerApp:
     def start_status_monitor(self):
         def monitor():
             while True:
-                if self.auto_detect.get():
-                    with self.data_lock:
-                        snapshot = [p for p in self.active_players if p["platform"] in ("twitch",) and not p["active"]]
-                    for p in snapshot:
-                        check_source(p)
+                try:
+                    if self.auto_detect.get():
+                        with self.data_lock:
+                            snapshot = [p for p in self.active_players if p["platform"] in ("twitch",) and not p["active"]]
+                        for p in snapshot:
+                            check_source(p)
+                except RuntimeError:
+                    pass  # 非主线程调用 tkinter 变量时忽略
                 time.sleep(AUTO_DETECT_INTERVAL)
         threading.Thread(target=monitor, daemon=True).start()
 
@@ -2608,9 +2611,7 @@ class ManagerApp:
 
 if __name__ == "__main__":
     root = ctk.CTk()
-    root.withdraw()  # 隐藏初始 TK 窗口
     root.geometry("1200x950")
     root.minsize(1000, 700)
     ManagerApp(root)
-    root.deiconify()  # UI 构建完成后显示
     root.mainloop()
