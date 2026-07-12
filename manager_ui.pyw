@@ -421,26 +421,27 @@ def check_source(player):
 def start_mediamtx():
     global mediamtx_proc
     if mediamtx_proc and mediamtx_proc.poll() is None:
-        return
+        return  # 已在运行，不重复启动
+    # 先杀掉所有残留的 MediaMTX 进程，避免端口冲突
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            if proc.info["name"] and "mediamtx" in proc.info["name"].lower():
+                proc.kill()
+                log("系统", f"[MediaMTX-清理] 已终止残留进程 PID={proc.info['pid']}")
+        except:
+            pass
+    time.sleep(0.5)
     yml_path = os.path.join(BASE_DIR, "mediamtx.yml")
+    # 始终生成全量路径 (player1-50)，覆盖所有可能的选手 ID
     paths = {}
-    try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        for p in cfg.get("players", []):
-            pid = p.get("id", 0)
-            if pid:
-                paths[f"live/player{pid}"] = {"source": "publisher"}
-    except:
-        pass
-    if not paths:
-        for i in range(1, 10):
-            paths[f"live/player{i}"] = {"source": "publisher"}
+    for i in range(1, 51):
+        paths[f"live/player{i}"] = {"source": "publisher"}
     yml = "rtmpAddress: :1935\nhlsAddress: :8888\nhlsSegmentDuration: 1s\nhlsSegmentCount: 7\npaths:\n"
     for k, v in paths.items():
         yml += f'  "{k}": {{ source: publisher }}\n'
     with open(yml_path, "w", encoding="utf-8") as f:
         f.write(yml)
+    log("系统", "[MediaMTX-启动] 已生成 YML 配置 (player1-50)")
     proc = subprocess.Popen([MEDIAMTX_EXE], cwd=BASE_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
     mediamtx_proc = proc
     read_stream_output(proc, "[MediaMTX] ", "MediaMTX")
@@ -895,12 +896,13 @@ class MonitorWindow:
         rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
         log("系统", f"[监视器-B站-步骤2] URL={url}, RTMP={rtmp_url}")
 
-        # 确保 MediaMTX 运行
+        # 确保 MediaMTX 运行（由主程序管理，此处仅检查）
         global mediamtx_proc
         if not mediamtx_proc or mediamtx_proc.poll() is not None:
-            log("系统", f"[监视器-B站-步骤3] 启动 MediaMTX")
-            start_mediamtx()
-        wait_for_mediamtx()
+            log("系统", f"[监视器-B站-步骤3] MediaMTX 未运行，等待主程序启动")
+            wait_for_mediamtx()
+        else:
+            log("系统", f"[监视器-B站-步骤3] MediaMTX 已在运行")
 
         try:
             log("系统", f"[监视器-B站-步骤4] 启动 streamlink + ffmpeg 管线")
