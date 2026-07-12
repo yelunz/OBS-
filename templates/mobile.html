@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>多视角监控</title>
+<style>
+    :root {
+        --bg: #0B0E14;
+        --card-bg: #131620;
+        --border: #1E293B;
+        --brand: #3B82F6;
+        --brand-hover: #2563EB;
+        --success: #22C55E;
+        --warning: #F59E0B;
+        --text: #E2E8F0;
+        --text-secondary: #94A3B8;
+        --radius: 12px;
+        --btn-radius: 8px;
+        --danger: #EF4444;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+        height: 100%;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        overflow-x: hidden;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+        -webkit-user-select: none;
+    }
+    /* ========== 顶部标题栏 ========== */
+    .header {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+        border-bottom: 1px solid var(--border);
+        padding: 12px 16px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        backdrop-filter: blur(10px);
+    }
+    .header-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--text);
+        letter-spacing: 0.5px;
+    }
+    .header-title span {
+        color: var(--brand);
+    }
+    .header-ip {
+        font-size: 12px;
+        color: var(--text-secondary);
+        background: rgba(59, 130, 246, 0.1);
+        padding: 4px 10px;
+        border-radius: 20px;
+        border: 1px solid rgba(59, 130, 246, 0.2);
+    }
+    .header-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+    .header-status .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--warning);
+        flex-shrink: 0;
+    }
+    .header-status .dot.connected { background: var(--success); }
+    /* ========== 主内容区 ========== */
+    .main {
+        padding: 12px;
+        max-width: 1400px;
+        margin: 0 auto;
+    }
+    .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 12px;
+    }
+    /* 手机竖屏 1-2 列 */
+    @media (max-width: 640px) {
+        .grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+        .main { padding: 8px; }
+        .header { padding: 10px 12px; }
+        .header-title { font-size: 15px; }
+    }
+    /* 平板横屏 3-4 列 */
+    @media (min-width: 1024px) {
+        .grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+    }
+    @media (min-width: 1200px) {
+        .grid { grid-template-columns: repeat(4, 1fr); }
+    }
+    /* ========== 选手卡片 ========== */
+    .card {
+        background: var(--card-bg);
+        border: 2px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        transition: border-color 0.3s, box-shadow 0.3s;
+        position: relative;
+    }
+    .card.current {
+        border-color: var(--brand);
+        box-shadow: 0 0 16px rgba(59, 130, 246, 0.25);
+    }
+    .card .img-wrap {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        background: #0a0d13;
+        overflow: hidden;
+    }
+    .card .img-wrap img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+    .card .img-wrap .placeholder {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-secondary);
+        font-size: 13px;
+        background: #0a0d13;
+    }
+    .card .img-wrap .current-badge {
+        position: absolute;
+        top: 6px;
+        left: 6px;
+        background: var(--brand);
+        color: #fff;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .card .info {
+        padding: 10px 12px 12px;
+    }
+    .card .name-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 6px;
+    }
+    .card .name {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 60%;
+    }
+    .card .platform-tag {
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 4px;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+    .platform-tag.bilibili { background: rgba(251, 114, 153, 0.2); color: #FB7299; }
+    .platform-tag.douyin { background: rgba(255, 0, 80, 0.2); color: #FF0050; }
+    .platform-tag.twitch { background: rgba(145, 70, 255, 0.2); color: #9146FF; }
+    .platform-tag.youtube { background: rgba(255, 0, 0, 0.2); color: #FF0000; }
+    .platform-tag.custom { background: rgba(59, 130, 246, 0.2); color: var(--brand); }
+    .card .status-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+        font-size: 12px;
+    }
+    .card .status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+    .card .status-dot.active { background: var(--success); }
+    .card .status-dot.offline { background: var(--text-secondary); }
+    .card .status-dot.current { background: var(--brand); }
+    .card .status-text {
+        color: var(--text-secondary);
+        font-size: 11px;
+    }
+    .card .hotkey {
+        font-size: 11px;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .card .switch-btn {
+        width: 100%;
+        padding: 10px 0;
+        font-size: 14px;
+        font-weight: 600;
+        color: #fff;
+        background: var(--brand);
+        border: none;
+        border-radius: var(--btn-radius);
+        cursor: pointer;
+        transition: background 0.2s, transform 0.1s;
+        min-height: 44px;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+    }
+    .card .switch-btn:active {
+        transform: scale(0.97);
+        background: var(--brand-hover);
+    }
+    .card .switch-btn.current-btn {
+        background: transparent;
+        border: 2px solid var(--brand);
+        color: var(--brand);
+        cursor: default;
+    }
+    .card .switch-btn.offline-btn {
+        background: var(--border);
+        color: var(--text-secondary);
+        cursor: not-allowed;
+    }
+    /* ========== 底部状态栏 ========== */
+    .footer {
+        position: sticky;
+        bottom: 0;
+        background: rgba(15, 23, 42, 0.95);
+        border-top: 1px solid var(--border);
+        padding: 10px 16px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 12px;
+        color: var(--text-secondary);
+        backdrop-filter: blur(10px);
+        z-index: 100;
+    }
+    .footer .obs-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .footer .obs-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+    .footer .obs-dot.online { background: var(--success); }
+    .footer .obs-dot.offline { background: var(--danger); }
+    /* ========== 空状态 ========== */
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-secondary);
+    }
+    .empty-state .icon {
+        font-size: 48px;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }
+    .empty-state p {
+        font-size: 14px;
+        line-height: 1.6;
+    }
+    /* ========== 加载动画 ========== */
+    .loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 40px;
+    }
+    .spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid var(--border);
+        border-top-color: var(--brand);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* ========== Toast ========== */
+    .toast {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) scale(0.8);
+        background: rgba(30, 41, 59, 0.95);
+        color: var(--text);
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-size: 14px;
+        z-index: 9999;
+        opacity: 0;
+        transition: opacity 0.3s, transform 0.3s;
+        pointer-events: none;
+    }
+    .toast.show {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+    .toast.success { border: 1px solid var(--success); }
+    .toast.error { border: 1px solid var(--danger); }
+</style>
+</head>
+<body>
+
+<!-- 顶部标题栏 -->
+<div class="header">
+    <div class="header-title">📺 多视角<span>监控</span></div>
+    <div class="header-status">
+        <span class="dot" id="obsDot"></span>
+        <span id="obsLabel">OBS</span>
+    </div>
+    <div class="header-ip" id="headerIp">--</div>
+</div>
+
+<!-- 主内容区 -->
+<div class="main">
+    <div class="loading" id="loading"><div class="spinner"></div></div>
+    <div class="grid" id="grid" style="display:none;"></div>
+    <div class="empty-state" id="empty" style="display:none;">
+        <div class="icon">🎬</div>
+        <p>暂无选手数据<br>请在桌面端添加选手</p>
+    </div>
+</div>
+
+<!-- 底部状态栏 -->
+<div class="footer">
+    <div class="obs-status">
+        <span class="obs-dot offline" id="footerObsDot"></span>
+        <span id="footerObsText">OBS 未连接</span>
+    </div>
+    <div>当前视角: <strong id="footerCurrent">--</strong></div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+(function() {
+    // ========== DOM 引用 ==========
+    const grid = document.getElementById('grid');
+    const loading = document.getElementById('loading');
+    const empty = document.getElementById('empty');
+    const toast = document.getElementById('toast');
+    const headerIp = document.getElementById('headerIp');
+    const obsDot = document.getElementById('obsDot');
+    const obsLabel = document.getElementById('obsLabel');
+    const footerObsDot = document.getElementById('footerObsDot');
+    const footerObsText = document.getElementById('footerObsText');
+    const footerCurrent = document.getElementById('footerCurrent');
+
+    let socket = null;
+    let playerCards = {};
+    let currentView = null;
+
+    // ========== Toast ==========
+    let toastTimer = null;
+    function showToast(msg, type) {
+        if (toastTimer) clearTimeout(toastTimer);
+        toast.textContent = msg;
+        toast.className = 'toast ' + (type || '') + ' show';
+        toastTimer = setTimeout(function() {
+            toast.className = 'toast';
+        }, 2000);
+    }
+
+    // ========== 平台标签颜色 ==========
+    function platformClass(platform) {
+        var p = (platform || '').toLowerCase();
+        if (p.includes('b站') || p.includes('bili')) return 'bilibili';
+        if (p.includes('抖音') || p.includes('douyin') || p.includes('tiktok')) return 'douyin';
+        if (p.includes('twitch')) return 'twitch';
+        if (p.includes('youtube') || p.includes('yt')) return 'youtube';
+        return 'custom';
+    }
+
+    // ========== 创建/更新卡片 ==========
+    function createOrUpdateCard(player) {
+        var card = playerCards[player.name];
+        if (!card) {
+            card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML =
+                '<div class="img-wrap">' +
+                '  <div class="placeholder">等待画面...</div>' +
+                '  <img src="" alt="" style="display:none;">' +
+                '  <div class="current-badge" style="display:none;">当前视角</div>' +
+                '</div>' +
+                '<div class="info">' +
+                '  <div class="name-row">' +
+                '    <span class="name"></span>' +
+                '    <span class="platform-tag"></span>' +
+                '  </div>' +
+                '  <div class="status-row">' +
+                '    <span class="status-dot"></span>' +
+                '    <span class="status-text"></span>' +
+                '  </div>' +
+                '  <div class="hotkey"></div>' +
+                '  <button class="switch-btn">切换视角</button>' +
+                '</div>';
+            var btn = card.querySelector('.switch-btn');
+            btn.addEventListener('click', function() {
+                doSwitch(player.name);
+            });
+            playerCards[player.name] = card;
+            grid.appendChild(card);
+        }
+        updateCardUI(card, player);
+        return card;
+    }
+
+    function updateCardUI(card, player) {
+        var isCurrent = player.is_current;
+        // 卡片高亮
+        card.classList.toggle('current', isCurrent);
+        // 名称
+        card.querySelector('.name').textContent = player.name;
+        // 平台标签
+        var tag = card.querySelector('.platform-tag');
+        tag.textContent = player.platform;
+        tag.className = 'platform-tag ' + platformClass(player.platform);
+        // 状态
+        var dot = card.querySelector('.status-dot');
+        var statusText = card.querySelector('.status-text');
+        if (isCurrent) {
+            dot.className = 'status-dot current';
+            statusText.textContent = '当前视角';
+        } else if (player.active) {
+            dot.className = 'status-dot active';
+            statusText.textContent = '活跃';
+        } else {
+            dot.className = 'status-dot offline';
+            statusText.textContent = '离线';
+        }
+        // 快捷键
+        card.querySelector('.hotkey').textContent = player.hotkey ? '快捷键: ' + player.hotkey : '';
+        // 当前视角徽章
+        var badge = card.querySelector('.current-badge');
+        badge.style.display = isCurrent ? 'block' : 'none';
+        // 按钮
+        var btn = card.querySelector('.switch-btn');
+        if (!player.active) {
+            btn.className = 'switch-btn offline-btn';
+            btn.textContent = '离线';
+            btn.disabled = true;
+        } else if (isCurrent) {
+            btn.className = 'switch-btn current-btn';
+            btn.textContent = '当前视角';
+            btn.disabled = true;
+        } else {
+            btn.className = 'switch-btn';
+            btn.textContent = '切换视角';
+            btn.disabled = false;
+        }
+    }
+
+    // ========== 更新截图 ==========
+    function updateScreenshot(data) {
+        var card = playerCards[data.name];
+        if (!card) return;
+        var img = card.querySelector('.img-wrap img');
+        var placeholder = card.querySelector('.img-wrap .placeholder');
+        if (data.image) {
+            img.src = 'data:image/jpeg;base64,' + data.image;
+            img.style.display = 'block';
+            placeholder.style.display = 'none';
+        }
+        // 更新状态
+        var player = {
+            name: data.name,
+            platform: data.platform,
+            active: data.active,
+            is_current: data.is_current,
+            hotkey: data.hotkey || ''
+        };
+        updateCardUI(card, player);
+        // 更新当前视角
+        if (data.is_current) {
+            currentView = data.name;
+            footerCurrent.textContent = data.name;
+        }
+        // 如果当前视角变了，刷新所有卡片
+        if (currentView !== data.name && data.is_current) {
+            refreshAllIsCurrent(data.name);
+        }
+    }
+
+    function refreshAllIsCurrent(newCurrent) {
+        currentView = newCurrent;
+        for (var name in playerCards) {
+            var card = playerCards[name];
+            var isCurrent = (name === newCurrent);
+            card.classList.toggle('current', isCurrent);
+            var dot = card.querySelector('.status-dot');
+            var statusText = card.querySelector('.status-text');
+            var badge = card.querySelector('.current-badge');
+            var btn = card.querySelector('.switch-btn');
+            badge.style.display = isCurrent ? 'block' : 'none';
+            if (isCurrent) {
+                dot.className = 'status-dot current';
+                statusText.textContent = '当前视角';
+                btn.className = 'switch-btn current-btn';
+                btn.textContent = '当前视角';
+                btn.disabled = true;
+            } else {
+                // 保持原状态，只清除 current 样式
+                if (btn.classList.contains('current-btn')) {
+                    btn.className = 'switch-btn';
+                    btn.textContent = '切换视角';
+                    btn.disabled = false;
+                }
+            }
+        }
+        footerCurrent.textContent = newCurrent || '--';
+    }
+
+    // ========== 切换视角 ==========
+    function doSwitch(name) {
+        fetch('/api/switch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                showToast('已切换到 ' + data.switched_to, 'success');
+                refreshAllIsCurrent(data.switched_to);
+            } else {
+                showToast(data.error || '切换失败', 'error');
+            }
+        })
+        .catch(function() {
+            showToast('网络错误', 'error');
+        });
+    }
+
+    // ========== 加载选手列表 ==========
+    function loadPlayers() {
+        fetch('/api/players')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) {
+                showToast(data.error, 'error');
+                return;
+            }
+            var players = data.players || [];
+            loading.style.display = 'none';
+            if (players.length === 0) {
+                grid.style.display = 'none';
+                empty.style.display = 'block';
+                return;
+            }
+            empty.style.display = 'none';
+            grid.style.display = 'grid';
+            // 移除已不存在的卡片
+            var names = {};
+            for (var i = 0; i < players.length; i++) {
+                names[players[i].name] = true;
+            }
+            for (var name in playerCards) {
+                if (!names[name]) {
+                    playerCards[name].remove();
+                    delete playerCards[name];
+                }
+            }
+            // 创建/更新卡片
+            for (var i = 0; i < players.length; i++) {
+                createOrUpdateCard(players[i]);
+            }
+            // 更新当前视角
+            for (var i = 0; i < players.length; i++) {
+                if (players[i].is_current) {
+                    currentView = players[i].name;
+                    footerCurrent.textContent = players[i].name;
+                    break;
+                }
+            }
+        })
+        .catch(function() {
+            loading.style.display = 'none';
+            showToast('加载失败，请刷新', 'error');
+        });
+    }
+
+    // ========== 加载状态 ==========
+    function loadStatus() {
+        fetch('/api/status')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) return;
+            headerIp.textContent = data.local_ip || '--';
+            if (data.obs_connected) {
+                obsDot.className = 'dot connected';
+                obsLabel.textContent = 'OBS';
+                footerObsDot.className = 'obs-dot online';
+                footerObsText.textContent = 'OBS 已连接';
+            } else {
+                obsDot.className = 'dot';
+                obsLabel.textContent = 'OBS';
+                footerObsDot.className = 'obs-dot offline';
+                footerObsText.textContent = 'OBS 未连接';
+            }
+            if (data.current_view) {
+                footerCurrent.textContent = data.current_view;
+            }
+        })
+        .catch(function() {});
+    }
+
+    // ========== WebSocket 连接 ==========
+    function connectSocket() {
+        if (socket && socket.connected) return;
+        socket = io({ reconnection: true, reconnectionDelay: 2000, reconnectionDelayMax: 10000, reconnectionAttempts: Infinity });
+        socket.on('connect', function() {
+            console.log('[WS] 已连接');
+        });
+        socket.on('screenshot', function(data) {
+            updateScreenshot(data);
+        });
+        socket.on('disconnect', function() {
+            console.log('[WS] 断开，自动重连中...');
+        });
+        socket.on('connect_error', function() {
+            console.log('[WS] 连接错误，自动重连中...');
+        });
+    }
+
+    // ========== 初始化 ==========
+    function init() {
+        loadStatus();
+        loadPlayers();
+        connectSocket();
+        // 定时刷新状态和选手列表
+        setInterval(loadStatus, 5000);
+        setInterval(loadPlayers, 10000);
+    }
+
+    // 页面加载完成后初始化
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>
+</body>
+</html>

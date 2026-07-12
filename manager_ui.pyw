@@ -1,11 +1,66 @@
 import json, os, subprocess, sys, time, threading, socket, collections, re, shutil, webbrowser, base64, io
 import tkinter as tk
 from tkinter import ttk, messagebox, Menu, scrolledtext
+import customtkinter as ctk
 from obswebsocket import obsws, requests
 import psutil
 from pynput import mouse, keyboard
 import ctypes
 from ctypes import wintypes
+from web_remote import start_web_server
+
+# ==================== 现代化 UI 主题 (shadcn/ui Dashboard 风格) ====================
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
+
+# 色彩常量
+PAGE_BG = "#0B0E14"
+CARD_BG = "#131620"
+ELEVATED_BG = "#1A1F2E"
+ACCENT = "#3B82F6"
+ACCENT_HOVER = "#2563EB"
+SUCCESS = "#22C55E"
+WARNING = "#F59E0B"
+DANGER = "#EF4444"
+TEXT_PRIMARY = "#E2E8F0"
+TEXT_SECONDARY = "#94A3B8"
+BORDER = "#1E293B"
+
+# CTk 主题微调
+def _apply_ctk_theme():
+    from customtkinter import ThemeManager
+    theme = ThemeManager.theme
+    if "CTk" in theme:
+        theme["CTk"]["fg_color"] = [PAGE_BG, PAGE_BG]
+    if "CTkFrame" in theme:
+        theme["CTkFrame"]["fg_color"] = [CARD_BG, CARD_BG]
+        theme["CTkFrame"]["border_color"] = [BORDER, BORDER]
+    if "CTkButton" in theme:
+        theme["CTkButton"]["fg_color"] = [ACCENT, ACCENT]
+        theme["CTkButton"]["hover_color"] = [ACCENT_HOVER, ACCENT_HOVER]
+        theme["CTkButton"]["text_color"] = ["#FFFFFF", "#FFFFFF"]
+    if "CTkLabel" in theme:
+        theme["CTkLabel"]["text_color"] = [TEXT_PRIMARY, TEXT_PRIMARY]
+    if "CTkEntry" in theme:
+        theme["CTkEntry"]["fg_color"] = [ELEVATED_BG, ELEVATED_BG]
+        theme["CTkEntry"]["border_color"] = [BORDER, BORDER]
+        theme["CTkEntry"]["text_color"] = [TEXT_PRIMARY, TEXT_PRIMARY]
+    if "CTkComboBox" in theme:
+        theme["CTkComboBox"]["fg_color"] = [ELEVATED_BG, ELEVATED_BG]
+        theme["CTkComboBox"]["border_color"] = [BORDER, BORDER]
+        theme["CTkComboBox"]["text_color"] = [TEXT_PRIMARY, TEXT_PRIMARY]
+        theme["CTkComboBox"]["button_color"] = [ACCENT, ACCENT]
+        theme["CTkComboBox"]["button_hover_color"] = [ACCENT_HOVER, ACCENT_HOVER]
+    if "CTkCheckBox" in theme:
+        theme["CTkCheckBox"]["fg_color"] = [ACCENT, ACCENT]
+        theme["CTkCheckBox"]["hover_color"] = [ACCENT_HOVER, ACCENT_HOVER]
+        theme["CTkCheckBox"]["border_color"] = [BORDER, BORDER]
+    if "CTkTextbox" in theme:
+        theme["CTkTextbox"]["fg_color"] = [ELEVATED_BG, ELEVATED_BG]
+        theme["CTkTextbox"]["border_color"] = [BORDER, BORDER]
+        theme["CTkTextbox"]["text_color"] = [TEXT_PRIMARY, TEXT_PRIMARY]
+
+_apply_ctk_theme()
 
 # ==================== VLC 模块检测 ====================
 VLC_AVAILABLE = False
@@ -527,7 +582,7 @@ def normalize_view_label(value):
 # ==================== 编辑对话框 ====================
 class PlayerDialog:
     def __init__(self, parent, players, current_player=None, prefill=None):
-        self.top = tk.Toplevel(parent)
+        self.top = ctk.CTkToplevel(parent)
         self.top.title("编辑选手" if current_player else "添加选手")
         self.result = None
         self.players = players
@@ -561,36 +616,36 @@ class PlayerDialog:
         self.douyin_var = tk.StringVar(value=douyin_url)
         self.qual_var = tk.StringVar(value=current_player.get("quality", "best") if current_player else "best")
         self.url_var = tk.StringVar(value=browser_url)
-        ttk.Label(self.top, text="显示名称:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-        ttk.Entry(self.top, textvariable=self.name_var, width=20).grid(row=0, column=1, padx=5, pady=5)
-        ttk.Label(self.top, text="快捷键 (单字符):").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
-        ttk.Entry(self.top, textvariable=self.hotkey_var, width=10).grid(row=1, column=1, padx=5, pady=5)
-        ttk.Label(self.top, text="平台:").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
-        combo = ttk.Combobox(self.top, textvariable=self.plat_var, values=["bilibili", "twitch", "douyin", "custom_web"], state="readonly")
+        ctk.CTkLabel(self.top, text="显示名称:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        ctk.CTkEntry(self.top, textvariable=self.name_var, width=20).grid(row=0, column=1, padx=5, pady=5)
+        ctk.CTkLabel(self.top, text="快捷键 (单字符):").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+        ctk.CTkEntry(self.top, textvariable=self.hotkey_var, width=10).grid(row=1, column=1, padx=5, pady=5)
+        ctk.CTkLabel(self.top, text="平台:").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
+        combo = ctk.CTkComboBox(self.top, variable=self.plat_var, values=["bilibili", "twitch", "douyin", "custom_web"], state="readonly")
         combo.grid(row=2, column=1, padx=5, pady=5, sticky=tk.W)
-        combo.bind("<<ComboboxSelected>>", self.on_plat)
-        self.frame = ttk.Frame(self.top)
+        combo.configure(command=self.on_plat)
+        self.frame = ctk.CTkFrame(self.top, fg_color="transparent")
         self.frame.grid(row=3, column=0, columnspan=2, sticky=tk.W)
         self.on_plat()
-        ttk.Label(self.top, text="清晰度 (推流):").grid(row=4, column=0, padx=5, pady=5, sticky=tk.W)
-        ttk.Combobox(self.top, textvariable=self.qual_var, values=["best", "worst", "720p60", "480p", "360p"], state="readonly").grid(row=4, column=1, padx=5, pady=5, sticky=tk.W)
-        ttk.Button(self.top, text="确定", command=self.ok).grid(row=5, column=0, columnspan=2, pady=10)
+        ctk.CTkLabel(self.top, text="清晰度 (推流):").grid(row=4, column=0, padx=5, pady=5, sticky=tk.W)
+        ctk.CTkComboBox(self.top, variable=self.qual_var, values=["best", "worst", "720p60", "480p", "360p"], state="readonly").grid(row=4, column=1, padx=5, pady=5, sticky=tk.W)
+        ctk.CTkButton(self.top, text="确定", command=self.ok).grid(row=5, column=0, columnspan=2, pady=10)
 
     def on_plat(self, event=None):
         for w in self.frame.winfo_children():
             w.destroy()
         p = self.plat_var.get()
         if p in ("bilibili", "custom_web"):
-            ttk.Label(self.frame, text="房间号 (选填):").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-            ttk.Entry(self.frame, textvariable=self.room_var, width=20).grid(row=0, column=1, padx=5, pady=5)
-            ttk.Label(self.frame, text="完整URL:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
-            ttk.Entry(self.frame, textvariable=self.url_var, width=50).grid(row=1, column=1, padx=5, pady=5)
+            ctk.CTkLabel(self.frame, text="房间号 (选填):").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+            ctk.CTkEntry(self.frame, textvariable=self.room_var, width=20).grid(row=0, column=1, padx=5, pady=5)
+            ctk.CTkLabel(self.frame, text="完整URL:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+            ctk.CTkEntry(self.frame, textvariable=self.url_var, width=50).grid(row=1, column=1, padx=5, pady=5)
         elif p == "twitch":
-            ttk.Label(self.frame, text="频道名或完整URL:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-            ttk.Entry(self.frame, textvariable=self.twitch_var, width=50).grid(row=0, column=1, padx=5, pady=5)
+            ctk.CTkLabel(self.frame, text="频道名或完整URL:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+            ctk.CTkEntry(self.frame, textvariable=self.twitch_var, width=50).grid(row=0, column=1, padx=5, pady=5)
         elif p == "douyin":
-            ttk.Label(self.frame, text="直播间URL:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-            ttk.Entry(self.frame, textvariable=self.douyin_var, width=50).grid(row=0, column=1, padx=5, pady=5)
+            ctk.CTkLabel(self.frame, text="直播间URL:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+            ctk.CTkEntry(self.frame, textvariable=self.douyin_var, width=50).grid(row=0, column=1, padx=5, pady=5)
 
     def ok(self):
         hotkey = self.hotkey_var.get().strip()
@@ -621,24 +676,24 @@ class PlayerDialog:
 # ==================== OBS 登录框 ====================
 class OBSLoginDialog:
     def __init__(self, parent, host="localhost", port=4455, password=""):
-        self.top = tk.Toplevel(parent)
+        self.top = ctk.CTkToplevel(parent)
         self.top.title("配置 OBS 连接")
         self.top.resizable(False, False)
         self.result = None
-        ttk.Label(self.top, text="请填写 OBS WebSocket 服务器信息：", font=("微软雅黑", 10)).grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 5))
-        ttk.Label(self.top, text="主机:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+        ctk.CTkLabel(self.top, text="请填写 OBS WebSocket 服务器信息：", font=("微软雅黑", 10)).grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 5))
+        ctk.CTkLabel(self.top, text="主机:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
         self.host_var = tk.StringVar(value=host)
-        ttk.Entry(self.top, textvariable=self.host_var, width=20).grid(row=1, column=1, padx=5, pady=5)
-        ttk.Label(self.top, text="端口:").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
+        ctk.CTkEntry(self.top, textvariable=self.host_var, width=20).grid(row=1, column=1, padx=5, pady=5)
+        ctk.CTkLabel(self.top, text="端口:").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
         self.port_var = tk.IntVar(value=port)
-        ttk.Entry(self.top, textvariable=self.port_var, width=20).grid(row=2, column=1, padx=5, pady=5)
-        ttk.Label(self.top, text="密码:").grid(row=3, column=0, padx=5, pady=5, sticky=tk.W)
+        ctk.CTkEntry(self.top, textvariable=self.port_var, width=20).grid(row=2, column=1, padx=5, pady=5)
+        ctk.CTkLabel(self.top, text="密码:").grid(row=3, column=0, padx=5, pady=5, sticky=tk.W)
         self.pwd_var = tk.StringVar(value=password)
-        ttk.Entry(self.top, textvariable=self.pwd_var, width=20, show="*").grid(row=3, column=1, padx=5, pady=5)
-        btn_frame = ttk.Frame(self.top)
+        ctk.CTkEntry(self.top, textvariable=self.pwd_var, width=20, show="*").grid(row=3, column=1, padx=5, pady=5)
+        btn_frame = ctk.CTkFrame(self.top, fg_color="transparent")
         btn_frame.grid(row=4, column=0, columnspan=2, pady=15)
-        ttk.Button(btn_frame, text="连接", command=self.ok).pack(side=tk.LEFT, padx=10)
-        ttk.Button(btn_frame, text="取消", command=self.top.destroy).pack(side=tk.LEFT, padx=10)
+        ctk.CTkButton(btn_frame, text="连接", command=self.ok).pack(side=tk.LEFT, padx=10)
+        ctk.CTkButton(btn_frame, text="取消", command=self.top.destroy).pack(side=tk.LEFT, padx=10)
         self.top.grab_set()
         parent.wait_window(self.top)
 
@@ -659,7 +714,7 @@ class OBSLoginDialog:
 class MonitorWindow:
     def __init__(self, parent_app):
         self.app = parent_app
-        self.win = tk.Toplevel(parent_app.root)
+        self.win = ctk.CTkToplevel(parent_app.root)
         self.win.title("多视角监控")
         self.win.geometry("960x600")
         self.win.minsize(400, 300)
@@ -690,13 +745,13 @@ class MonitorWindow:
             except:
                 self.vlc_instance = None
 
-        toolbar = ttk.Frame(self.win)
+        toolbar = ctk.CTkFrame(self.win, fg_color=CARD_BG, corner_radius=8)
         toolbar.pack(fill=tk.X, side=tk.TOP, pady=2)
-        ttk.Button(toolbar, text="🔄 刷新所有", command=self.refresh_all).pack(side=tk.LEFT, padx=5)
+        ctk.CTkButton(toolbar, text="🔄 刷新所有", command=self.refresh_all, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=5)
 
         self.container = ttk.Frame(self.win)
         self.container.pack(fill=tk.BOTH, expand=True)
-        self.empty_label = tk.Label(self.container, text="暂无推流", font=("微软雅黑", 16), fg="gray")
+        self.empty_label = ctk.CTkLabel(self.container, text="暂无推流", font=("微软雅黑", 16), text_color="gray")
         self._start_mouse_listener()
         self.win.bind("<Configure>", self._on_resize)
         self.after_id = None
@@ -799,7 +854,7 @@ class MonitorWindow:
 
         frame = ttk.Frame(self.container, borderwidth=1, relief=tk.SUNKEN)
         canvas = tk.Canvas(frame, bg="black")
-        name_label = tk.Label(frame, text=name, bg="#333333", fg="white", font=("微软雅黑", 9))
+        name_label = tk.Label(frame, text=name, bg="#1E293B", fg=TEXT_PRIMARY, font=("微软雅黑", 9))
         frame.place(x=0, y=0, width=100, height=100)
         canvas.place(x=0, y=0, width=100, height=75)
         name_label.place(x=0, y=75, width=100, height=25)
@@ -1270,6 +1325,12 @@ class ManagerApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(2000, self.all_start)
 
+        # 启动 Web 远程控制服务器
+        def _start_web():
+            url = start_web_server(self)
+            log("系统", f"[Web遥控] 服务器已启动: {url}")
+        self.root.after(3000, _start_web)
+
     def load_cfg(self):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -1352,11 +1413,11 @@ class ManagerApp:
     def _on_obs_connected(self, ok, err):
         if ok:
             self.original_scene = self.obs.scene_name
-            self.obs_status_label.config(text="✅ OBS 已连接", foreground="green")
+            self.obs_status_label.configure(text="✅ OBS 已连接", text_color="green")
             self.setup_scene()
             self.refresh_ui()
         else:
-            self.obs_status_label.config(text="⚠ OBS 断开", foreground="red")
+            self.obs_status_label.configure(text="⚠ OBS 断开", text_color="red")
 
     def setup_scene(self):
         if not self.obs or not self.obs.connected:
@@ -1376,33 +1437,35 @@ class ManagerApp:
         self.root.rowconfigure(2, weight=1)
         self.root.rowconfigure(3, weight=0)
 
-        toolbar = ttk.Frame(self.root, padding=5)
+        toolbar = ctk.CTkFrame(self.root, fg_color=CARD_BG, corner_radius=10)
         toolbar.grid(row=0, column=0, sticky=tk.EW, padx=10, pady=(10, 0))
-        ttk.Button(toolbar, text="➕ 添加选手", command=self.add).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="📋 快速添加", command=self.quick_add).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="📥 批量导入", command=self.bulk_import_window).pack(side=tk.LEFT, padx=2)
-        ttk.Checkbutton(toolbar, text="自动检测源状态", variable=self.auto_detect).pack(side=tk.LEFT, padx=10)
-        ttk.Button(toolbar, text="🔄 重连 OBS", command=self.reconnect_obs).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="🔁 重启服务", command=self.restart_services).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="🖥 监视器", command=self.toggle_monitor).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="❓ 帮助", command=self.show_help).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="📤 批量添加到视角", command=self.batch_move_to_active).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="▶ 批量上源", command=self.batch_activate).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="⏸ 批量下源", command=self.batch_deactivate).pack(side=tk.LEFT, padx=2)
-        self.obs_status_label = tk.Label(toolbar, text="OBS: 检测中", fg="orange")
+        ctk.CTkButton(toolbar, text="➕ 添加选手", command=self.add, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(toolbar, text="📋 快速添加", command=self.quick_add, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(toolbar, text="📥 批量导入", command=self.bulk_import_window, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkCheckBox(toolbar, text="自动检测源状态", variable=self.auto_detect).pack(side=tk.LEFT, padx=10)
+        ctk.CTkButton(toolbar, text="🔄 重连 OBS", command=self.reconnect_obs, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(toolbar, text="🔁 重启服务", command=self.restart_services, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(toolbar, text="🖥 监视器", command=self.toggle_monitor, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(toolbar, text="❓ 帮助", command=self.show_help, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(toolbar, text="📤 批量添加到视角", command=self.batch_move_to_active, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(toolbar, text="▶ 批量上源", command=self.batch_activate, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        ctk.CTkButton(toolbar, text="⏸ 批量下源", command=self.batch_deactivate, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=2)
+        self.obs_status_label = ctk.CTkLabel(toolbar, text="OBS: 检测中", text_color="orange")
         self.obs_status_label.pack(side=tk.RIGHT, padx=5)
 
-        main = ttk.Frame(self.root)
+        main = ctk.CTkFrame(self.root, fg_color="transparent")
         main.grid(row=1, column=0, padx=10, pady=5, sticky=tk.NSEW)
         main.columnconfigure(0, weight=3)
         main.columnconfigure(1, weight=1)
         main.rowconfigure(0, weight=1)
         main.rowconfigure(1, weight=1)
 
-        store_frame = ttk.LabelFrame(main, text="选手仓库 (勾选即可多选)", padding=2)
+        store_frame = ctk.CTkFrame(main, fg_color=CARD_BG, corner_radius=10)
         store_frame.grid(row=0, column=0, sticky=tk.NSEW)
         store_frame.columnconfigure(0, weight=1)
-        store_frame.rowconfigure(0, weight=1)
+        store_frame.rowconfigure(0, weight=0)
+        store_frame.rowconfigure(1, weight=1)
+        ctk.CTkLabel(store_frame, text="选手仓库 (勾选即可多选)", font=("微软雅黑", 10, "bold"), text_color=TEXT_PRIMARY).grid(row=0, column=0, sticky=tk.W, padx=5, pady=(5, 0))
         self.store_tree = CheckboxTreeview(store_frame, columns=("sel", "name", "platform", "status", "key"),
                                            checkbox_col="#1", show="headings")
         self.store_tree.heading("sel", text="选择")
@@ -1412,13 +1475,15 @@ class ManagerApp:
         self.store_tree.heading("key", text="键")
         self.store_tree.column("sel", width=40, anchor=tk.CENTER)
         self.store_tree.column("platform", width=60)
-        self.store_tree.grid(row=0, column=0, sticky=tk.NSEW)
+        self.store_tree.grid(row=1, column=0, sticky=tk.NSEW)
         self.store_tree.bind("<Button-3>", self.on_store_right_click)
 
-        active_frame = ttk.LabelFrame(main, text="视角列表 (勾选即可多选)", padding=2)
+        active_frame = ctk.CTkFrame(main, fg_color=CARD_BG, corner_radius=10)
         active_frame.grid(row=1, column=0, sticky=tk.NSEW)
         active_frame.columnconfigure(0, weight=1)
-        active_frame.rowconfigure(0, weight=1)
+        active_frame.rowconfigure(0, weight=0)
+        active_frame.rowconfigure(1, weight=1)
+        ctk.CTkLabel(active_frame, text="视角列表 (勾选即可多选)", font=("微软雅黑", 10, "bold"), text_color=TEXT_PRIMARY).grid(row=0, column=0, sticky=tk.W, padx=5, pady=(5, 0))
         self.active_tree = CheckboxTreeview(active_frame, columns=("sel", "name", "platform", "source", "status", "key"),
                                             checkbox_col="#1", show="headings")
         self.active_tree.heading("sel", text="选择")
@@ -1429,46 +1494,55 @@ class ManagerApp:
         self.active_tree.heading("key", text="键")
         self.active_tree.column("sel", width=40, anchor=tk.CENTER)
         self.active_tree.column("platform", width=60)
-        self.active_tree.grid(row=0, column=0, sticky=tk.NSEW)
+        self.active_tree.grid(row=1, column=0, sticky=tk.NSEW)
         self.active_tree.bind("<Button-3>", self.on_active_right_click)
 
-        right = ttk.Frame(main)
+        right = ctk.CTkFrame(main, fg_color="transparent")
         right.grid(row=0, column=1, rowspan=2, sticky=tk.NSEW, padx=(10, 0))
         right.columnconfigure(0, weight=1)
         right.rowconfigure(0, weight=0)
         right.rowconfigure(1, weight=1)
 
-        cur_frame = ttk.LabelFrame(right, text="当前视角", padding=5)
+        cur_frame = ctk.CTkFrame(right, fg_color=CARD_BG, corner_radius=10)
         cur_frame.grid(row=0, column=0, sticky=tk.EW, pady=(0, 10))
-        self.cur_label = tk.Label(cur_frame, text="无", font=("微软雅黑", 14), bg="#E6F2FF", relief=tk.SUNKEN, anchor=tk.CENTER)
-        self.cur_label.pack(fill=tk.X, ipady=10)
+        ctk.CTkLabel(cur_frame, text="当前视角", font=("微软雅黑", 10, "bold"), text_color=TEXT_PRIMARY).grid(row=0, column=0, sticky=tk.W, padx=5, pady=(5, 0))
+        self.cur_label = ctk.CTkLabel(cur_frame, text="无", font=("微软雅黑", 16, "bold"), text_color=ACCENT)
+        self.cur_label.grid(row=1, column=0, sticky=tk.EW, ipady=10, padx=5, pady=5)
 
-        pool_frame = ttk.LabelFrame(right, text=f"活跃池 (最多{self.max_streams}个)", padding=5)
+        pool_frame = ctk.CTkFrame(right, fg_color=CARD_BG, corner_radius=10)
         pool_frame.grid(row=1, column=0, sticky=tk.NSEW)
         pool_frame.columnconfigure(0, weight=1)
-        pool_frame.rowconfigure(0, weight=1)
-        self.pool_list = tk.Listbox(pool_frame, height=6, font=("微软雅黑", 10))
-        self.pool_list.grid(row=0, column=0, sticky=tk.NSEW)
-        settings_btn = ttk.Button(pool_frame, text="⚙️", width=3, command=self.show_settings)
-        settings_btn.grid(row=1, column=0, sticky=tk.SE, padx=5, pady=5)
-        self.pool_label = pool_frame
+        pool_frame.rowconfigure(0, weight=0)
+        pool_frame.rowconfigure(1, weight=1)
+        pool_frame.rowconfigure(2, weight=0)
+        self.pool_label = ctk.CTkLabel(pool_frame, text=f"活跃池 (最多{self.max_streams}个)", font=("微软雅黑", 10, "bold"), text_color=TEXT_PRIMARY)
+        self.pool_label.grid(row=0, column=0, sticky=tk.W, padx=5, pady=(5, 0))
+        self.pool_list = tk.Listbox(pool_frame, height=6, font=("微软雅黑", 10), bg=PAGE_BG, fg=TEXT_PRIMARY, selectbackground=ACCENT)
+        self.pool_list.grid(row=1, column=0, sticky=tk.NSEW)
+        settings_btn = ctk.CTkButton(pool_frame, text="⚙️", width=3, command=self.show_settings, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER)
+        settings_btn.grid(row=2, column=0, sticky=tk.SE, padx=5, pady=5)
 
-        log_frame = ttk.LabelFrame(self.root, text="选手日志", padding=5)
+        log_frame = ctk.CTkFrame(self.root, fg_color=CARD_BG, corner_radius=10)
         log_frame.grid(row=2, column=0, padx=10, pady=(5, 5), sticky=tk.NSEW)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=0)
-        log_frame.rowconfigure(1, weight=1)
-        log_selector = ttk.Frame(log_frame)
-        log_selector.grid(row=0, column=0, sticky=tk.EW)
-        ttk.Label(log_selector, text="查看日志:").pack(side=tk.LEFT, padx=5)
-        self.log_combo = ttk.Combobox(log_selector, textvariable=self.current_log_player, state="readonly", values=["系统"])
+        log_frame.rowconfigure(1, weight=0)
+        log_frame.rowconfigure(2, weight=1)
+        ctk.CTkLabel(log_frame, text="选手日志", font=("微软雅黑", 10, "bold"), text_color=TEXT_PRIMARY).grid(row=0, column=0, sticky=tk.W, padx=5, pady=(5, 0))
+        log_selector = ctk.CTkFrame(log_frame, fg_color="transparent")
+        log_selector.grid(row=1, column=0, sticky=tk.EW)
+        ctk.CTkLabel(log_selector, text="查看日志:", text_color=TEXT_SECONDARY).pack(side=tk.LEFT, padx=5)
+        self.log_combo = ctk.CTkComboBox(log_selector, variable=self.current_log_player, state="readonly", values=["系统"])
         self.log_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.log_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_log_view())
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=8, font=("Consolas", 9), state=tk.DISABLED)
-        self.log_text.grid(row=1, column=0, sticky=tk.NSEW)
+        self.log_combo.configure(command=lambda v: self._refresh_log_view())
+        self.log_text = ctk.CTkTextbox(log_frame, height=8, font=("Consolas", 9))
+        self.log_text.configure(state="disabled")
+        self.log_text.grid(row=2, column=0, sticky=tk.NSEW)
 
         self.status_var = tk.StringVar(value="就绪")
-        ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W).grid(row=3, column=0, sticky=tk.EW, padx=10, pady=(0, 5))
+        status_frame = ctk.CTkFrame(self.root, fg_color=CARD_BG, corner_radius=6)
+        status_frame.grid(row=3, column=0, sticky=tk.EW, padx=10, pady=(0, 5))
+        ctk.CTkLabel(status_frame, textvariable=self.status_var, anchor="w", text_color=TEXT_SECONDARY).pack(fill=tk.X, padx=5, pady=2)
 
     # ---------- 辅助获取勾选 ----------
     def get_selected_store_players(self):
@@ -1777,7 +1851,7 @@ class ManagerApp:
 
         existing = self.obs.get_all_source_names()
         cur_name = self.get_current_display_name()
-        self.cur_label.config(text=cur_name or "无")
+        self.cur_label.configure(text=cur_name or "无")
 
         with self.data_lock:
             to_remove = [p for p in self.active_players if p.get("obs_source_name") and p["obs_source_name"] not in existing and not (p["name"] == cur_name)]
@@ -1911,7 +1985,7 @@ class ManagerApp:
     # ---------- 日志与状态 ----------
     def _update_log_combo(self):
         names = ["系统"] + [p["name"] for p in self.players] + ["MediaMTX", "Switcher"]
-        self.log_combo['values'] = names
+        self.log_combo.configure(values=names)
         if self.current_log_player.get() not in names:
             self.current_log_player.set("系统")
 
@@ -1919,13 +1993,13 @@ class ManagerApp:
         if not hasattr(self, 'log_text'):
             return
         target = self.current_log_player.get()
-        self.log_text.config(state=tk.NORMAL)
+        self.log_text.configure(state="normal")
         self.log_text.delete(1.0, tk.END)
         if target in player_logs:
             for line in player_logs[target]:
                 self.log_text.insert(tk.END, line + "\n")
         self.log_text.see(tk.END)
-        self.log_text.config(state=tk.DISABLED)
+        self.log_text.configure(state="disabled")
 
     def start_log_consumer(self):
         def updater():
@@ -2015,19 +2089,19 @@ class ManagerApp:
             self.monitor_window = MonitorWindow(self)
 
     def show_settings(self):
-        top = tk.Toplevel(self.root)
+        top = ctk.CTkToplevel(self.root)
         top.title("系统设置")
         top.resizable(False, False)
         top.grab_set()
-        ttk.Label(top, text="最大活跃推流数:", font=("微软雅黑", 10)).grid(row=0, column=0, padx=10, pady=(10, 5), sticky=tk.W)
+        ctk.CTkLabel(top, text="最大活跃推流数:", font=("微软雅黑", 10)).grid(row=0, column=0, padx=10, pady=(10, 5), sticky=tk.W)
         var_streams = tk.IntVar(value=self.max_streams)
-        ttk.Entry(top, textvariable=var_streams, width=10).grid(row=0, column=1, padx=10, pady=(10, 5))
-        ttk.Label(top, text="快捷键修饰键:", font=("微软雅黑", 10)).grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
+        ctk.CTkEntry(top, textvariable=var_streams, width=10).grid(row=0, column=1, padx=10, pady=(10, 5))
+        ctk.CTkLabel(top, text="快捷键修饰键:", font=("微软雅黑", 10)).grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
         modifier_values = ["alt+shift", "alt", "ctrl+shift"]
         var_mod = tk.StringVar(value=self.hotkey_modifiers)
-        combo = ttk.Combobox(top, textvariable=var_mod, values=modifier_values, state="readonly", width=10)
+        combo = ctk.CTkComboBox(top, variable=var_mod, values=modifier_values, state="readonly", width=10)
         combo.grid(row=1, column=1, padx=10, pady=5)
-        ttk.Label(top, text="(保存后自动重启服务生效)", foreground="gray").grid(row=2, column=0, columnspan=2, pady=(0, 10))
+        ctk.CTkLabel(top, text="(保存后自动重启服务生效)", text_color="gray").grid(row=2, column=0, columnspan=2, pady=(0, 10))
 
         def save():
             try:
@@ -2040,40 +2114,40 @@ class ManagerApp:
             self.max_streams = val
             self.hotkey_modifiers = var_mod.get()
             if self.pool_label:
-                self.pool_label.config(text=f"活跃池 (最多{val}个)")
+                self.pool_label.configure(text=f"活跃池 (最多{val}个)")
             self.save_config()
             self.restart_services()
             top.destroy()
             self.set_status(f"设置已更新，服务已重启")
 
-        btn_frame = ttk.Frame(top)
+        btn_frame = ctk.CTkFrame(top, fg_color="transparent")
         btn_frame.grid(row=3, column=0, columnspan=2, pady=(0, 10))
-        ttk.Button(btn_frame, text="保存", command=save).pack(side=tk.LEFT, padx=10)
-        ttk.Button(btn_frame, text="取消", command=top.destroy).pack(side=tk.LEFT, padx=10)
+        ctk.CTkButton(btn_frame, text="保存", command=save).pack(side=tk.LEFT, padx=10)
+        ctk.CTkButton(btn_frame, text="取消", command=top.destroy).pack(side=tk.LEFT, padx=10)
         self.root.wait_window(top)
 
     def show_help(self):
         help_text = "帮助内容省略"
-        top = tk.Toplevel(self.root)
+        top = ctk.CTkToplevel(self.root)
         top.title("使用帮助")
         top.geometry("500x300")
-        text = scrolledtext.ScrolledText(top, wrap=tk.WORD)
+        text = ctk.CTkTextbox(top, wrap="word")
         text.insert(tk.END, help_text)
-        text.config(state=tk.DISABLED)
+        text.configure(state="disabled")
         text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        ttk.Button(top, text="关闭", command=top.destroy).pack(pady=(0, 10))
+        ctk.CTkButton(top, text="关闭", command=top.destroy).pack(pady=(0, 10))
 
     def bulk_import_window(self):
-        top = tk.Toplevel(self.root)
+        top = ctk.CTkToplevel(self.root)
         top.title("批量导入选手")
         top.geometry("600x500")
         top.resizable(True, True)
-        lbl = tk.Label(top, text="请粘贴链接或频道名，每行一个：", font=("微软雅黑", 10))
+        lbl = ctk.CTkLabel(top, text="请粘贴链接或频道名，每行一个：", font=("微软雅黑", 10))
         lbl.pack(padx=10, pady=(10, 5), anchor=tk.W)
-        text_area = scrolledtext.ScrolledText(top, wrap=tk.WORD, font=("Consolas", 10))
+        text_area = ctk.CTkTextbox(top, wrap="word", font=("Consolas", 10))
         text_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         status_var = tk.StringVar(value="就绪")
-        status_label = tk.Label(top, textvariable=status_var, fg="gray")
+        status_label = ctk.CTkLabel(top, textvariable=status_var, text_color="gray")
         status_label.pack(padx=10, pady=5, anchor=tk.W)
 
         def process_import():
@@ -2086,7 +2160,7 @@ class ManagerApp:
                 messagebox.showwarning("提示", "没有有效行")
                 return
             status_var.set("正在解析...")
-            btn.config(state=tk.DISABLED)
+            btn.configure(state="disabled")
 
             def worker():
                 success = 0
@@ -2171,7 +2245,7 @@ class ManagerApp:
                     self._update_log_combo()
                     self.refresh_ui()
                     status_var.set(f"完成：成功 {success}，跳过 {skipped}，失败 {fail}")
-                    btn.config(state=tk.NORMAL)
+                    btn.configure(state="normal")
                     msg = f"成功 {success} 个"
                     if skipped > 0:
                         msg += f"，跳过 {skipped} 个重复"
@@ -2184,11 +2258,11 @@ class ManagerApp:
 
             threading.Thread(target=worker, daemon=True).start()
 
-        btn_frame = ttk.Frame(top)
+        btn_frame = ctk.CTkFrame(top, fg_color="transparent")
         btn_frame.pack(pady=(0, 10))
-        btn = ttk.Button(btn_frame, text="导入", command=process_import)
+        btn = ctk.CTkButton(btn_frame, text="导入", command=process_import)
         btn.pack(side=tk.LEFT, padx=10)
-        ttk.Button(btn_frame, text="关闭", command=top.destroy).pack(side=tk.LEFT, padx=10)
+        ctk.CTkButton(btn_frame, text="关闭", command=top.destroy).pack(side=tk.LEFT, padx=10)
 
     def save_config(self):
         cfg = {
@@ -2220,6 +2294,11 @@ class ManagerApp:
                     self.obs.remove_scene(DEDICATED_SCENE)
             except:
                 pass
+        try:
+            from web_remote import stop_screenshot_push
+            stop_screenshot_push()
+        except:
+            pass
         self.all_stop()
         self.save_config()
         if self.obs:
@@ -2227,7 +2306,7 @@ class ManagerApp:
         self.root.destroy()
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    root = ctk.CTk()
     root.geometry("1200x950")
     root.minsize(1000, 700)
     ManagerApp(root)

@@ -55,7 +55,7 @@
             "stream_name": "player3",
             "obs_source_name": "emi_mge7_3_3",
             "active": false,
-            "source_ok": false,
+            "source_ok": true,
             "stream_pid": null,
             "window_title": "OBS_Window_emi_mge7"
         },
@@ -199,7 +199,7 @@
             "stream_name": "player11",
             "obs_source_name": "extesyy_11_b",
             "active": false,
-            "source_ok": false,
+            "source_ok": null,
             "stream_pid": null,
             "window_title": "OBS_Window_extesyy"
         },
@@ -217,7 +217,7 @@
             "stream_name": "player12",
             "obs_source_name": "woojungx4_12_c",
             "active": false,
-            "source_ok": false,
+            "source_ok": null,
             "stream_pid": null,
             "window_title": "OBS_Window_woojungx4"
         },
@@ -235,7 +235,7 @@
             "stream_name": "player13",
             "obs_source_name": "irissiri129_13_d",
             "active": false,
-            "source_ok": false,
+            "source_ok": null,
             "stream_pid": null,
             "window_title": "OBS_Window_irissiri129"
         },
@@ -294,6 +294,7 @@
             "window_title": "OBS_Window_抖音测试"
         },
         {
+            "id": 18,
             "name": "刘",
             "hotkey": "g",
             "platform": "bilibili",
@@ -302,13 +303,12 @@
             "douyin_url": "",
             "quality": "best",
             "browser_url": "https://live.bilibili.com/2652387",
-            "id": 18,
             "view_label": 17,
             "stream_name": "player18",
-            "active": true,
+            "obs_source_name": "",
+            "active": false,
             "source_ok": null,
             "stream_pid": null,
-            "obs_source_name": "刘_17_g",
             "window_title": "OBS_Window_刘"
         }
     ],
