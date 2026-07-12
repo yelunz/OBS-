@@ -1439,10 +1439,14 @@ class ManagerApp:
         if ok:
             self.original_scene = self.obs.scene_name
             self.obs_status_label.configure(text="✅ OBS 已连接", text_color=SUCCESS)
+            if hasattr(self, '_stat_values') and "OBS 状态" in self._stat_values:
+                self._stat_values["OBS 状态"].configure(text="已连接", text_color=SUCCESS)
             self.setup_scene()
             self.refresh_ui()
         else:
             self.obs_status_label.configure(text="⚠ OBS 断开", text_color=DANGER)
+            if hasattr(self, '_stat_values') and "OBS 状态" in self._stat_values:
+                self._stat_values["OBS 状态"].configure(text="未连接", text_color=DANGER)
 
     def setup_scene(self):
         if not self.obs or not self.obs.connected:
@@ -1624,26 +1628,38 @@ class ManagerApp:
             ("快速添加", self.quick_add, ACCENT, ACCENT_HOVER),
             ("批量导入", self.bulk_import_window, ELEVATED_BG, CARD_BG),
             ("批量▸视角", self.batch_move_to_active, ELEVATED_BG, CARD_BG),
-            ("上源", self.batch_activate, SUCCESS, "#8BCF8A"),
-            ("下源", self.batch_deactivate, DANGER, "#E07A8A"),
-            ("重连OBS", self.reconnect_obs, ELEVATED_BG, CARD_BG),
-            ("重启服务", self.restart_services, ELEVATED_BG, CARD_BG),
-            ("监视器", self.toggle_monitor, ELEVATED_BG, CARD_BG),
-            ("帮助", self.show_help, ELEVATED_BG, CARD_BG),
         ]
-
-        row1 = ctk.CTkFrame(actions, fg_color="transparent")
-        row1.pack(fill=tk.X, pady=(0, 3))
-        row2 = ctk.CTkFrame(actions, fg_color="transparent")
-        row2.pack(fill=tk.X)
-
-        for i, (text, cmd, fg, hov) in enumerate(btn_specs[:5]):
-            ctk.CTkButton(row1, text=text, command=cmd, corner_radius=7,
-                          fg_color=fg, hover_color=hov, text_color="#FFFFFF" if fg != ELEVATED_BG else TEXT_PRIMARY,
+        btn_row = ctk.CTkFrame(actions, fg_color="transparent")
+        btn_row.pack(fill=tk.X, pady=(0, 3))
+        for i, (text, cmd, fg, hov) in enumerate(btn_specs):
+            ctk.CTkButton(btn_row, text=text, command=cmd, corner_radius=7,
+                          fg_color=fg, hover_color=hov,
+                          text_color="#FFFFFF" if fg != ELEVATED_BG else TEXT_PRIMARY,
                           font=("微软雅黑", 10), height=30).pack(side=tk.LEFT, padx=(0, 4))
-        for i, (text, cmd, fg, hov) in enumerate(btn_specs[5:]):
-            ctk.CTkButton(row2, text=text, command=cmd, corner_radius=7,
-                          fg_color=fg, hover_color=hov, text_color="#FFFFFF" if fg != ELEVATED_BG else TEXT_PRIMARY,
+
+        # 推流控制 + 系统工具
+        tool_row = ctk.CTkFrame(actions, fg_color="transparent")
+        tool_row.pack(fill=tk.X, pady=(0, 3))
+        
+        # 推流控制组
+        ctk.CTkButton(tool_row, text="上源", command=self.batch_activate, corner_radius=7,
+                      fg_color=SUCCESS, hover_color="#8BCF8A", text_color="#FFFFFF",
+                      font=("微软雅黑", 10), height=30).pack(side=tk.LEFT, padx=(0, 4))
+        ctk.CTkButton(tool_row, text="下源", command=self.batch_deactivate, corner_radius=7,
+                      fg_color=DANGER, hover_color="#E07A8A", text_color="#FFFFFF",
+                      font=("微软雅黑", 10), height=30).pack(side=tk.LEFT, padx=(0, 12))
+        
+        # 系统工具组
+        sys_btns = [
+            ("重连OBS", self.reconnect_obs),
+            ("重启服务", self.restart_services),
+            ("监视器", self.toggle_monitor),
+            ("帮助", self.show_help),
+        ]
+        for text, cmd in sys_btns:
+            ctk.CTkButton(tool_row, text=text, command=cmd, corner_radius=7,
+                          fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER,
+                          text_color=TEXT_PRIMARY,
                           font=("微软雅黑", 10), height=30).pack(side=tk.LEFT, padx=(0, 4))
 
         # Auto-detect checkbox
@@ -2114,6 +2130,20 @@ class ManagerApp:
 
     # ---------- UI 刷新 ----------
     def refresh_ui(self):
+        # 更新统计卡片
+        if hasattr(self, '_stat_values'):
+            active_count = sum(1 for p in self.active_players if p.get("active"))
+            hotkey_count = len([p for p in self.players if p.get("hotkey")])
+            if "活跃选手" in self._stat_values:
+                self._stat_values["活跃选手"].configure(text=str(active_count))
+            if "快捷键" in self._stat_values:
+                self._stat_values["快捷键"].configure(text=str(hotkey_count))
+            if "OBS 状态" in self._stat_values:
+                if self.obs and self.obs.connected:
+                    self._stat_values["OBS 状态"].configure(text="已连接", text_color=SUCCESS)
+                else:
+                    self._stat_values["OBS 状态"].configure(text="未连接", text_color=DANGER)
+        
         if not self.obs or not self.obs.connected:
             self.refresh_store_tree()
             self._update_log_combo()
@@ -2122,6 +2152,8 @@ class ManagerApp:
         existing = self.obs.get_all_source_names()
         cur_name = self.get_current_display_name()
         self.cur_label.configure(text=cur_name or "无")
+        if hasattr(self, '_stat_values') and "当前视角" in self._stat_values:
+            self._stat_values["当前视角"].configure(text=cur_name or "无")
 
         with self.data_lock:
             to_remove = [p for p in self.active_players if p.get("obs_source_name") and p["obs_source_name"] not in existing and not (p["name"] == cur_name)]
@@ -2157,9 +2189,11 @@ class ManagerApp:
         self.active_tree.set_checked_by_name(checked_names)
 
         self.pool_list.delete(0, tk.END)
-        for p in self.active_players:
+        for p in sorted(self.active_players, key=lambda x: (isinstance(x["view_label"], int), x["view_label"])):
             if p.get("active"):
                 self.pool_list.insert(tk.END, f"{p['name']} ({p['view_label']})")
+        if self.pool_label:
+            self.pool_label.configure(text=f"活跃池 ({len(self.pool_list.get(0, tk.END))}个)")
 
         self._update_log_combo()
         self._update_monitor()
