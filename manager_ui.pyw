@@ -66,23 +66,32 @@ _apply_ctk_theme()
 def _apply_ttk_theme():
     """设置 ttk.Treeview 暗色主题样式"""
     style = ttk.Style()
-    style.theme_use("default")
+    style.theme_use("clam")
+    
+    # Treeview 主体
     style.configure("Treeview",
                     background=PAGE_BG,
                     foreground=TEXT_PRIMARY,
                     fieldbackground=PAGE_BG,
                     borderwidth=0,
-                    font=("Microsoft YaHei UI", 9))
+                    font=("Segoe UI", 10),
+                    rowheight=28)
     style.configure("Treeview.Heading",
                     background=CARD_BG,
                     foreground=TEXT_PRIMARY,
                     borderwidth=0,
-                    font=("Microsoft YaHei UI", 9, "bold"))
+                    font=("Segoe UI", 10, "bold"),
+                    relief="flat")
+    
+    # 选中行
     style.map("Treeview",
-              background=[("selected", ELEVATED_BG)],
-              foreground=[("selected", TEXT_PRIMARY)])
+              background=[("selected", ACCENT)],
+              foreground=[("selected", "#FFFFFF")])
     style.map("Treeview.Heading",
               background=[("active", ELEVATED_BG)])
+    
+    # 消除 Treeview 的虚线边框
+    style.layout("Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
 
 _apply_ttk_theme()
 
@@ -704,7 +713,7 @@ class OBSLoginDialog:
         self.top.title("配置 OBS 连接")
         self.top.resizable(False, False)
         self.result = None
-        ctk.CTkLabel(self.top, text="请填写 OBS WebSocket 服务器信息：", font=("Microsoft YaHei UI", 10)).grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 5))
+        ctk.CTkLabel(self.top, text="请填写 OBS WebSocket 服务器信息：", font=("Segoe UI", 10)).grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 5))
         ctk.CTkLabel(self.top, text="主机:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
         self.host_var = tk.StringVar(value=host)
         ctk.CTkEntry(self.top, textvariable=self.host_var, width=20).grid(row=1, column=1, padx=5, pady=5)
@@ -775,7 +784,7 @@ class MonitorWindow:
 
         self.container = ttk.Frame(self.win)
         self.container.pack(fill=tk.BOTH, expand=True)
-        self.empty_label = ctk.CTkLabel(self.container, text="暂无推流", font=("Microsoft YaHei UI", 16), text_color=TEXT_SECONDARY)
+        self.empty_label = ctk.CTkLabel(self.container, text="暂无推流", font=("Segoe UI", 16), text_color=TEXT_SECONDARY)
         self._start_mouse_listener()
         self.win.bind("<Configure>", self._on_resize)
         self.after_id = None
@@ -878,7 +887,7 @@ class MonitorWindow:
 
         frame = ttk.Frame(self.container, borderwidth=1, relief=tk.SUNKEN)
         canvas = tk.Canvas(frame, bg=PAGE_BG)
-        name_label = tk.Label(frame, text=name, bg=ELEVATED_BG, fg=TEXT_PRIMARY, font=("Microsoft YaHei UI", 9))
+        name_label = tk.Label(frame, text=name, bg=ELEVATED_BG, fg=TEXT_PRIMARY, font=("Segoe UI", 9))
         frame.place(x=0, y=0, width=100, height=100)
         canvas.place(x=0, y=0, width=100, height=75)
         name_label.place(x=0, y=75, width=100, height=25)
@@ -907,7 +916,7 @@ class MonitorWindow:
                 log("系统", f"[监视器-显示-截图] 启动截图轮询: {name}")
             else:
                 log("系统", f"[监视器-显示-截图-失败] Pillow 未安装，无法截图预览: {name}")
-                canvas.create_text(150, 100, text="Pillow 未安装", fill="gray", font=("Microsoft YaHei UI", 10))
+                canvas.create_text(150, 100, text="Pillow 未安装", fill="gray", font=("Segoe UI", 10))
 
     def _hide_grid(self, name):
         if name not in self.grid_widgets:
@@ -1480,22 +1489,12 @@ class ManagerApp:
         header.grid(row=0, column=0, columnspan=2, sticky="ew")
         header.grid_propagate(False)
 
-        # 品牌区
         brand = ctk.CTkFrame(header, fg_color="transparent")
         brand.pack(side=tk.LEFT, padx=(16, 0))
-        ctk.CTkLabel(brand, text="◈", font=("Microsoft YaHei UI", 20), text_color=ACCENT).pack(side=tk.LEFT)
-        ctk.CTkLabel(brand, text="OBS MultiView", font=("Microsoft YaHei UI", 13, "bold"),
-                     text_color=TEXT_PRIMARY).pack(side=tk.LEFT, padx=(6, 0))
+        ctk.CTkLabel(brand, text="OBS MultiView", font=("Segoe UI", 14, "bold"),
+                     text_color=TEXT_PRIMARY).pack(side=tk.LEFT)
 
-        # 右侧：设置按钮
-        ctk.CTkButton(header, text="设置", width=60, height=30, corner_radius=6,
-                      fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER,
-                      text_color=TEXT_PRIMARY, font=("Microsoft YaHei UI", 10),
-                      command=self.show_settings).pack(side=tk.RIGHT, padx=(0, 16))
-
-        # 保留 obs_status_label 引用（隐藏，但其他方法仍引用它）
-        self.obs_status_label = ctk.CTkLabel(header, text="", font=("Microsoft YaHei UI", 10))
-
+        self.obs_status_label = ctk.CTkLabel(header, text="", font=("Segoe UI", 10))
         return header
 
     # ==================== Sidebar ====================
@@ -1517,9 +1516,9 @@ class ManagerApp:
             btn = ctk.CTkButton(sidebar, text=label,
                                 anchor="w", fg_color="transparent",
                                 hover_color=ELEVATED_BG, text_color=TEXT_SECONDARY,
-                                font=("Microsoft YaHei UI", 12), corner_radius=8,
-                                height=38, command=lambda k=key: self._show_page(k))
-            btn.grid(row=i, column=0, sticky="ew", padx=10, pady=2)
+                                font=("Segoe UI", 13), corner_radius=8,
+                                height=40, command=lambda k=key: self._show_page(k))
+            btn.grid(row=i, column=0, sticky="ew", padx=10, pady=3)
             self._nav_buttons[key] = btn
 
         # 底部 Web 遥控信息
@@ -1527,11 +1526,17 @@ class ManagerApp:
         sep.grid(row=5, column=0, sticky="ew", padx=16, pady=(0, 8))
 
         web_info = ctk.CTkFrame(sidebar, fg_color="transparent")
-        web_info.grid(row=6, column=0, sticky="ew", padx=16, pady=(0, 12))
-        ctk.CTkLabel(web_info, text="手机遥控", font=("Microsoft YaHei UI", 9),
+        web_info.grid(row=6, column=0, sticky="ew", padx=16, pady=(0, 6))
+        ctk.CTkLabel(web_info, text="手机遥控", font=("Segoe UI", 10),
                      text_color=TEXT_SECONDARY).pack(anchor="w")
-        ctk.CTkLabel(web_info, text="localhost:5000", font=("Microsoft YaHei UI", 9, "bold"),
+        ctk.CTkLabel(web_info, text="localhost:5000", font=("Segoe UI", 10, "bold"),
                      text_color=ACCENT).pack(anchor="w")
+
+        # 设置按钮
+        ctk.CTkButton(sidebar, text="设置", command=self.show_settings,
+                      fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER,
+                      text_color=TEXT_PRIMARY, font=("Segoe UI", 11),
+                      corner_radius=7, height=34).grid(row=7, column=0, sticky="ew", padx=10, pady=(4, 12))
 
         return sidebar
 
@@ -1554,8 +1559,9 @@ class ManagerApp:
         page.grid(row=0, column=0, sticky="nsew")
         page.columnconfigure(0, weight=1)
         page.rowconfigure(0, weight=0)  # stats
-        page.rowconfigure(1, weight=0)  # current view
-        page.rowconfigure(2, weight=1)  # pool + actions
+        page.rowconfigure(1, weight=0)  # actions
+        page.rowconfigure(2, weight=0)  # current view
+        page.rowconfigure(3, weight=1)  # pool + auto-detect
 
         # ── Stats Row ──
         stats = ctk.CTkFrame(page, fg_color="transparent")
@@ -1575,48 +1581,16 @@ class ManagerApp:
             card = ctk.CTkFrame(stats, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
             card.grid(row=0, column=i, sticky="ew", padx=4)
             inner = ctk.CTkFrame(card, fg_color="transparent")
-            inner.pack(fill=tk.BOTH, expand=True, padx=14, pady=12)
-            ctk.CTkLabel(inner, text=title, font=("Microsoft YaHei UI", 9),
+            inner.pack(fill=tk.BOTH, expand=True, padx=14, pady=10)
+            ctk.CTkLabel(inner, text=title, font=("Segoe UI", 10),
                          text_color=TEXT_SECONDARY).pack(anchor="w")
-            val_lbl = ctk.CTkLabel(inner, text=val, font=("Microsoft YaHei UI", 22, "bold"), text_color=ACCENT)
+            val_lbl = ctk.CTkLabel(inner, text=val, font=("Segoe UI", 24, "bold"), text_color=ACCENT)
             val_lbl.pack(anchor="w", pady=(2, 0))
             self._stat_values[title] = val_lbl
 
-        # ── Current View Card ──
-        cur_card = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=BORDER)
-        cur_card.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
-        cur_inner = ctk.CTkFrame(cur_card, fg_color="transparent")
-        cur_inner.pack(fill=tk.BOTH, padx=20, pady=16)
-        ctk.CTkLabel(cur_inner, text="当前播出视角", font=("Microsoft YaHei UI", 9),
-                     text_color=TEXT_SECONDARY).pack(anchor="w")
-        self.cur_label = ctk.CTkLabel(cur_inner, text="无", font=("Microsoft YaHei UI", 24, "bold"),
-                                      text_color=ACCENT)
-        self.cur_label.pack(anchor="w", pady=(4, 0))
-
-        # ── Pool + Actions ──
-        bottom = ctk.CTkFrame(page, fg_color="transparent")
-        bottom.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
-        bottom.columnconfigure(0, weight=1)
-        bottom.rowconfigure(0, weight=1)
-        bottom.rowconfigure(1, weight=0)
-
-        # Pool list
-        pool_frame = ctk.CTkFrame(bottom, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
-        pool_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
-        pool_inner = ctk.CTkFrame(pool_frame, fg_color="transparent")
-        pool_inner.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
-        self.pool_label = ctk.CTkLabel(pool_inner, text="活跃池", font=("Microsoft YaHei UI", 10, "bold"),
-                                       text_color=TEXT_PRIMARY)
-        self.pool_label.pack(anchor="w")
-        self.pool_list = tk.Listbox(pool_inner, bg=PAGE_BG, fg=TEXT_PRIMARY,
-                                    selectbackground=ACCENT, selectforeground="#FFFFFF",
-                                    font=("Microsoft YaHei UI", 10), activestyle="none",
-                                    borderwidth=0, highlightthickness=0)
-        self.pool_list.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
-
-        # Action buttons
-        actions = ctk.CTkFrame(bottom, fg_color="transparent")
-        actions.grid(row=1, column=0, sticky="ew")
+        # ── Action Buttons (moved here, above current view) ──
+        actions = ctk.CTkFrame(page, fg_color="transparent")
+        actions.grid(row=1, column=0, sticky="ew", padx=12, pady=6)
 
         btn_specs = [
             ("添加选手", self.add, ACCENT, ACCENT_HOVER),
@@ -1625,43 +1599,72 @@ class ManagerApp:
             ("批量推流", self.batch_move_to_active, ELEVATED_BG, ACCENT_HOVER),
         ]
         btn_row = ctk.CTkFrame(actions, fg_color="transparent")
-        btn_row.pack(fill=tk.X, pady=(0, 6))
+        btn_row.pack(fill=tk.X, pady=(0, 5))
         for i, (text, cmd, fg, hov) in enumerate(btn_specs):
             ctk.CTkButton(btn_row, text=text, command=cmd, corner_radius=7,
                           fg_color=fg, hover_color=hov,
                           text_color="#FFFFFF" if fg == ACCENT else TEXT_PRIMARY,
-                          font=("Microsoft YaHei UI", 10), height=32).pack(side=tk.LEFT, padx=(0, 6))
+                          font=("Segoe UI", 11), height=34).pack(side=tk.LEFT, padx=(0, 6))
 
-        # 推流控制
         ctrl_row = ctk.CTkFrame(actions, fg_color="transparent")
-        ctrl_row.pack(fill=tk.X, pady=(0, 6))
+        ctrl_row.pack(fill=tk.X)
         ctk.CTkButton(ctrl_row, text="上源", command=self.batch_activate, corner_radius=7,
                       fg_color=SUCCESS, hover_color="#8BCF8A", text_color="#FFFFFF",
-                      font=("Microsoft YaHei UI", 10), height=32).pack(side=tk.LEFT, padx=(0, 6))
+                      font=("Segoe UI", 11), height=34).pack(side=tk.LEFT, padx=(0, 6))
         ctk.CTkButton(ctrl_row, text="下源", command=self.batch_deactivate, corner_radius=7,
                       fg_color=DANGER, hover_color="#E07A8A", text_color="#FFFFFF",
-                      font=("Microsoft YaHei UI", 10), height=32).pack(side=tk.LEFT, padx=(0, 6))
+                      font=("Segoe UI", 11), height=34).pack(side=tk.LEFT, padx=(0, 6))
         
-        ctk.CTkLabel(ctrl_row, text="", width=16).pack(side=tk.LEFT)  # spacer
+        ctk.CTkLabel(ctrl_row, text="", width=16).pack(side=tk.LEFT)
         
         ctk.CTkButton(ctrl_row, text="重连 OBS", command=self.reconnect_obs, corner_radius=7,
                       fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER,
-                      text_color=TEXT_PRIMARY, font=("Microsoft YaHei UI", 10), height=32).pack(side=tk.LEFT, padx=(0, 6))
+                      text_color=TEXT_PRIMARY, font=("Segoe UI", 11), height=34).pack(side=tk.LEFT, padx=(0, 6))
         ctk.CTkButton(ctrl_row, text="重启服务", command=self.restart_services, corner_radius=7,
                       fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER,
-                      text_color=TEXT_PRIMARY, font=("Microsoft YaHei UI", 10), height=32).pack(side=tk.LEFT, padx=(0, 6))
+                      text_color=TEXT_PRIMARY, font=("Segoe UI", 11), height=34).pack(side=tk.LEFT, padx=(0, 6))
         ctk.CTkButton(ctrl_row, text="监视器", command=self.toggle_monitor, corner_radius=7,
                       fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER,
-                      text_color=TEXT_PRIMARY, font=("Microsoft YaHei UI", 10), height=32).pack(side=tk.LEFT, padx=(0, 6))
+                      text_color=TEXT_PRIMARY, font=("Segoe UI", 11), height=34).pack(side=tk.LEFT, padx=(0, 6))
         ctk.CTkButton(ctrl_row, text="帮助", command=self.show_help, corner_radius=7,
                       fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER,
-                      text_color=TEXT_PRIMARY, font=("Microsoft YaHei UI", 10), height=32).pack(side=tk.LEFT)
+                      text_color=TEXT_PRIMARY, font=("Segoe UI", 11), height=34).pack(side=tk.LEFT)
 
-        # Auto-detect checkbox
-        auto_frame = ctk.CTkFrame(actions, fg_color="transparent")
-        auto_frame.pack(fill=tk.X, pady=(4, 0))
+        # ── Current View Card ──
+        cur_card = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=BORDER)
+        cur_card.grid(row=2, column=0, sticky="ew", padx=12, pady=6)
+        cur_inner = ctk.CTkFrame(cur_card, fg_color="transparent")
+        cur_inner.pack(fill=tk.BOTH, padx=20, pady=14)
+        ctk.CTkLabel(cur_inner, text="当前播出视角", font=("Segoe UI", 10),
+                     text_color=TEXT_SECONDARY).pack(anchor="w")
+        self.cur_label = ctk.CTkLabel(cur_inner, text="无", font=("Segoe UI", 26, "bold"),
+                                      text_color=ACCENT)
+        self.cur_label.pack(anchor="w", pady=(4, 0))
+
+        # ── Pool + Auto-detect ──
+        bottom = ctk.CTkFrame(page, fg_color="transparent")
+        bottom.grid(row=3, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        bottom.columnconfigure(0, weight=1)
+        bottom.rowconfigure(0, weight=1)
+        bottom.rowconfigure(1, weight=0)
+
+        pool_frame = ctk.CTkFrame(bottom, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
+        pool_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
+        pool_inner = ctk.CTkFrame(pool_frame, fg_color="transparent")
+        pool_inner.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
+        self.pool_label = ctk.CTkLabel(pool_inner, text="活跃池", font=("Segoe UI", 11, "bold"),
+                                       text_color=TEXT_PRIMARY)
+        self.pool_label.pack(anchor="w")
+        self.pool_list = tk.Listbox(pool_inner, bg=PAGE_BG, fg=TEXT_PRIMARY,
+                                    selectbackground=ACCENT, selectforeground="#FFFFFF",
+                                    font=("Segoe UI", 11), activestyle="none",
+                                    borderwidth=0, highlightthickness=0)
+        self.pool_list.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
+
+        auto_frame = ctk.CTkFrame(bottom, fg_color="transparent")
+        auto_frame.grid(row=1, column=0, sticky="ew")
         ctk.CTkCheckBox(auto_frame, text="自动检测推流状态", variable=self.auto_detect,
-                        font=("Microsoft YaHei UI", 9), text_color=TEXT_SECONDARY,
+                        font=("Segoe UI", 10), text_color=TEXT_SECONDARY,
                         fg_color=ACCENT, hover_color=ACCENT_HOVER,
                         border_color=BORDER, checkmark_color="#FFFFFF").pack(side=tk.LEFT)
 
@@ -1681,12 +1684,12 @@ class ManagerApp:
 
         store_header = ctk.CTkFrame(store_section, fg_color="transparent")
         store_header.pack(fill=tk.X, padx=12, pady=(10, 4))
-        ctk.CTkLabel(store_header, text="选手仓库", font=("Microsoft YaHei UI", 11, "bold"),
+        ctk.CTkLabel(store_header, text="选手仓库", font=("Segoe UI", 11, "bold"),
                      text_color=TEXT_PRIMARY).pack(side=tk.LEFT)
         for t, cmd in [("添加", self.add), ("快速添加", self.quick_add), ("导入", self.bulk_import_window)]:
             ctk.CTkButton(store_header, text=t, command=cmd, corner_radius=6,
                           fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER, text_color=TEXT_PRIMARY,
-                          font=("Microsoft YaHei UI", 9), height=26, width=52).pack(side=tk.RIGHT, padx=(0, 4))
+                          font=("Segoe UI", 10), height=28, width=56).pack(side=tk.RIGHT, padx=(0, 4))
 
         store_scroll = ctk.CTkScrollableFrame(store_section, fg_color="transparent")
         store_scroll.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
@@ -1701,15 +1704,15 @@ class ManagerApp:
 
         active_header = ctk.CTkFrame(active_section, fg_color="transparent")
         active_header.pack(fill=tk.X, padx=12, pady=(10, 4))
-        ctk.CTkLabel(active_header, text="视角列表", font=("Microsoft YaHei UI", 11, "bold"),
+        ctk.CTkLabel(active_header, text="视角列表", font=("Segoe UI", 11, "bold"),
                      text_color=TEXT_PRIMARY).pack(side=tk.LEFT)
-        for t, cmd in [("上源", self.batch_activate), ("下源", self.batch_deactivate), ("▸视角", self.batch_move_to_active)]:
+        for t, cmd in [("上源", self.batch_activate), ("下源", self.batch_deactivate), ("推流", self.batch_move_to_active)]:
             fg = SUCCESS if t == "上源" else (DANGER if t == "下源" else ELEVATED_BG)
             hv = "#8BCF8A" if t == "上源" else ("#E07A8A" if t == "下源" else ACCENT_HOVER)
             tc = "#FFFFFF" if t in ("上源", "下源") else TEXT_PRIMARY
             ctk.CTkButton(active_header, text=t, command=cmd, corner_radius=6,
                           fg_color=fg, hover_color=hv, text_color=tc,
-                          font=("Microsoft YaHei UI", 9), height=26, width=52).pack(side=tk.RIGHT, padx=(0, 4))
+                          font=("Segoe UI", 10), height=28, width=56).pack(side=tk.RIGHT, padx=(0, 4))
 
         active_scroll = ctk.CTkScrollableFrame(active_section, fg_color="transparent")
         active_scroll.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
@@ -1728,27 +1731,27 @@ class ManagerApp:
         page.rowconfigure(0, weight=1)
 
         card = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=BORDER,
-                         width=400, height=300)
+                         width=480, height=360)
         card.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
-        ctk.CTkLabel(card, text="多视角监控", font=("Microsoft YaHei UI", 22, "bold"),
-                     text_color=ACCENT).pack(pady=(40, 4))
+        ctk.CTkLabel(card, text="多视角监控", font=("Segoe UI", 24, "bold"),
+                     text_color=ACCENT).pack(pady=(50, 6))
         ctk.CTkLabel(card, text="实时查看所有活跃选手的直播画面\n支持 B站 / Twitch / 抖音 / 自定义网页",
-                     font=("Microsoft YaHei UI", 10), text_color=TEXT_SECONDARY, justify="center").pack(pady=(0, 20))
+                     font=("Segoe UI", 11), text_color=TEXT_SECONDARY, justify="center").pack(pady=(0, 24))
 
         ctk.CTkButton(card, text="打开监视器", command=self.toggle_monitor,
                       corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                      text_color="#FFFFFF", font=("Microsoft YaHei UI", 12, "bold"),
-                      height=40, width=180).pack(pady=(0, 12))
+                      text_color="#FFFFFF", font=("Segoe UI", 13, "bold"),
+                      height=44, width=200).pack(pady=(0, 12))
 
         srvc = ctk.CTkFrame(card, fg_color="transparent")
         srvc.pack(pady=(0, 20))
         ctk.CTkButton(srvc, text="重连 OBS", command=self.reconnect_obs, corner_radius=6,
                       fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER, text_color=TEXT_PRIMARY,
-                      font=("Microsoft YaHei UI", 10), height=28, width=100).pack(side=tk.LEFT, padx=4)
+                      font=("Segoe UI", 11), height=30, width=110).pack(side=tk.LEFT, padx=4)
         ctk.CTkButton(srvc, text="重启服务", command=self.restart_services, corner_radius=6,
                       fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER, text_color=TEXT_PRIMARY,
-                      font=("Microsoft YaHei UI", 10), height=28, width=100).pack(side=tk.LEFT, padx=4)
+                      font=("Segoe UI", 11), height=30, width=110).pack(side=tk.LEFT, padx=4)
 
         return page
 
@@ -1764,13 +1767,13 @@ class ManagerApp:
         filter_bar = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
         filter_bar.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 4))
 
-        ctk.CTkLabel(filter_bar, text="日志", font=("Microsoft YaHei UI", 11, "bold"),
+        ctk.CTkLabel(filter_bar, text="日志", font=("Segoe UI", 11, "bold"),
                      text_color=TEXT_PRIMARY).pack(side=tk.LEFT, padx=12, pady=8)
-        ctk.CTkLabel(filter_bar, text="筛选:", font=("Microsoft YaHei UI", 9),
+        ctk.CTkLabel(filter_bar, text="筛选:", font=("Segoe UI", 10),
                      text_color=TEXT_SECONDARY).pack(side=tk.LEFT, padx=(0, 4))
         self.log_combo = ctk.CTkComboBox(filter_bar, variable=self.current_log_player,
                                          state="readonly", values=["系统"], width=140,
-                                         font=("Microsoft YaHei UI", 9), fg_color=ELEVATED_BG,
+                                         font=("Segoe UI", 11), fg_color=ELEVATED_BG,
                                          border_color=BORDER, button_color=ACCENT,
                                          button_hover_color=ACCENT_HOVER,
                                          dropdown_fg_color=CARD_BG, dropdown_text_color=TEXT_PRIMARY)
@@ -1779,7 +1782,7 @@ class ManagerApp:
         self.log_combo.set("系统")
 
         ctk.CTkCheckBox(filter_bar, text="自动检测", variable=self.auto_detect,
-                        font=("Microsoft YaHei UI", 9), text_color=TEXT_SECONDARY,
+                        font=("Segoe UI", 10), text_color=TEXT_SECONDARY,
                         fg_color=ACCENT, hover_color=ACCENT_HOVER,
                         border_color=BORDER, checkmark_color="#FFFFFF").pack(side=tk.RIGHT, padx=12)
 
@@ -1787,7 +1790,7 @@ class ManagerApp:
         log_container = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
         log_container.grid(row=1, column=0, sticky="nsew", padx=12, pady=(4, 12))
 
-        self.log_text = ctk.CTkTextbox(log_container, font=("Consolas", 10),
+        self.log_text = ctk.CTkTextbox(log_container, font=("Consolas", 11),
                                        fg_color="transparent", text_color=TEXT_PRIMARY,
                                        border_width=0, wrap="word")
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
@@ -1802,13 +1805,13 @@ class ManagerApp:
         bar.grid_propagate(False)
 
         ctk.CTkLabel(bar, textvariable=self.status_var, anchor="w",
-                     text_color=TEXT_SECONDARY, font=("Microsoft YaHei UI", 9)).pack(side=tk.LEFT, padx=12)
+                     text_color=TEXT_SECONDARY, font=("Segoe UI", 10)).pack(side=tk.LEFT, padx=12)
 
         # 右侧指示器
         ctk.CTkLabel(bar, text="localhost:5000", text_color=ACCENT,
-                     font=("Microsoft YaHei UI", 9)).pack(side=tk.RIGHT, padx=(0, 12))
+                     font=("Segoe UI", 10)).pack(side=tk.RIGHT, padx=(0, 12))
         ctk.CTkLabel(bar, text="▸", text_color=TEXT_SECONDARY,
-                     font=("Microsoft YaHei UI", 9)).pack(side=tk.RIGHT, padx=(0, 4))
+                     font=("Segoe UI", 10)).pack(side=tk.RIGHT, padx=(0, 4))
 
         return bar
 
@@ -2391,10 +2394,10 @@ class ManagerApp:
         top.title("系统设置")
         top.resizable(False, False)
         top.grab_set()
-        ctk.CTkLabel(top, text="最大活跃推流数:", font=("Microsoft YaHei UI", 10)).grid(row=0, column=0, padx=10, pady=(10, 5), sticky=tk.W)
+        ctk.CTkLabel(top, text="最大活跃推流数:", font=("Segoe UI", 10)).grid(row=0, column=0, padx=10, pady=(10, 5), sticky=tk.W)
         var_streams = tk.IntVar(value=self.max_streams)
         ctk.CTkEntry(top, textvariable=var_streams, width=10).grid(row=0, column=1, padx=10, pady=(10, 5))
-        ctk.CTkLabel(top, text="快捷键修饰键:", font=("Microsoft YaHei UI", 10)).grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
+        ctk.CTkLabel(top, text="快捷键修饰键:", font=("Segoe UI", 10)).grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
         modifier_values = ["alt+shift", "alt", "ctrl+shift"]
         var_mod = tk.StringVar(value=self.hotkey_modifiers)
         combo = ctk.CTkComboBox(top, variable=var_mod, values=modifier_values, state="readonly", width=10)
@@ -2440,7 +2443,7 @@ class ManagerApp:
         top.title("批量导入选手")
         top.geometry("600x500")
         top.resizable(True, True)
-        lbl = ctk.CTkLabel(top, text="请粘贴链接或频道名，每行一个：", font=("Microsoft YaHei UI", 10))
+        lbl = ctk.CTkLabel(top, text="请粘贴链接或频道名，每行一个：", font=("Segoe UI", 10))
         lbl.pack(padx=10, pady=(10, 5), anchor=tk.W)
         text_area = ctk.CTkTextbox(top, wrap="word", font=("Consolas", 10))
         text_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -2605,7 +2608,9 @@ class ManagerApp:
 
 if __name__ == "__main__":
     root = ctk.CTk()
+    root.withdraw()  # 隐藏初始 TK 窗口
     root.geometry("1200x950")
     root.minsize(1000, 700)
     ManagerApp(root)
+    root.deiconify()  # UI 构建完成后显示
     root.mainloop()
