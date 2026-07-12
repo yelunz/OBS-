@@ -14,17 +14,18 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 # 色彩常量
-PAGE_BG = "#0B0E14"
-CARD_BG = "#131620"
-ELEVATED_BG = "#1A1F2E"
-ACCENT = "#3B82F6"
-ACCENT_HOVER = "#2563EB"
-SUCCESS = "#22C55E"
-WARNING = "#F59E0B"
-DANGER = "#EF4444"
-TEXT_PRIMARY = "#E2E8F0"
-TEXT_SECONDARY = "#94A3B8"
-BORDER = "#1E293B"
+PAGE_BG = "#1E1E2E"       # 深紫灰底 - 亮度显著提升
+CARD_BG = "#262636"       # 卡片背景 - 比页面稍亮
+ELEVATED_BG = "#313146"   # 悬浮层/输入框
+ACCENT = "#89B4FA"        # 柔蓝 - 猫ppuccin蓝
+ACCENT_HOVER = "#74A8F0"  # 悬停蓝
+SUCCESS = "#A6E3A1"       # 柔绿
+WARNING = "#F9E2AF"       # 柔黄
+DANGER = "#F38BA8"        # 柔红
+TEXT_PRIMARY = "#CDD6F4"  # 主文字 - 高对比度
+TEXT_SECONDARY = "#9399B2" # 次要文字
+BORDER = "#45475A"        # 边框 - 清晰可见
+SIDEBAR_BG = "#181825"    # 侧边栏 - 比页面深一点
 
 # CTk 主题微调
 def _apply_ctk_theme():
@@ -61,6 +62,29 @@ def _apply_ctk_theme():
         theme["CTkTextbox"]["text_color"] = [TEXT_PRIMARY, TEXT_PRIMARY]
 
 _apply_ctk_theme()
+
+def _apply_ttk_theme():
+    """设置 ttk.Treeview 暗色主题样式"""
+    style = ttk.Style()
+    style.theme_use("default")
+    style.configure("Treeview",
+                    background=PAGE_BG,
+                    foreground=TEXT_PRIMARY,
+                    fieldbackground=PAGE_BG,
+                    borderwidth=0,
+                    font=("微软雅黑", 9))
+    style.configure("Treeview.Heading",
+                    background=CARD_BG,
+                    foreground=TEXT_PRIMARY,
+                    borderwidth=0,
+                    font=("微软雅黑", 9, "bold"))
+    style.map("Treeview",
+              background=[("selected", ELEVATED_BG)],
+              foreground=[("selected", TEXT_PRIMARY)])
+    style.map("Treeview.Heading",
+              background=[("active", ELEVATED_BG)])
+
+_apply_ttk_theme()
 
 # ==================== VLC 模块检测 ====================
 VLC_AVAILABLE = False
@@ -751,7 +775,7 @@ class MonitorWindow:
 
         self.container = ttk.Frame(self.win)
         self.container.pack(fill=tk.BOTH, expand=True)
-        self.empty_label = ctk.CTkLabel(self.container, text="暂无推流", font=("微软雅黑", 16), text_color="gray")
+        self.empty_label = ctk.CTkLabel(self.container, text="暂无推流", font=("微软雅黑", 16), text_color=TEXT_SECONDARY)
         self._start_mouse_listener()
         self.win.bind("<Configure>", self._on_resize)
         self.after_id = None
@@ -853,8 +877,8 @@ class MonitorWindow:
             return
 
         frame = ttk.Frame(self.container, borderwidth=1, relief=tk.SUNKEN)
-        canvas = tk.Canvas(frame, bg="black")
-        name_label = tk.Label(frame, text=name, bg="#1E293B", fg=TEXT_PRIMARY, font=("微软雅黑", 9))
+        canvas = tk.Canvas(frame, bg=PAGE_BG)
+        name_label = tk.Label(frame, text=name, bg=ELEVATED_BG, fg=TEXT_PRIMARY, font=("微软雅黑", 9))
         frame.place(x=0, y=0, width=100, height=100)
         canvas.place(x=0, y=0, width=100, height=75)
         name_label.place(x=0, y=75, width=100, height=25)
@@ -1413,11 +1437,11 @@ class ManagerApp:
     def _on_obs_connected(self, ok, err):
         if ok:
             self.original_scene = self.obs.scene_name
-            self.obs_status_label.configure(text="✅ OBS 已连接", text_color="green")
+            self.obs_status_label.configure(text="✅ OBS 已连接", text_color=SUCCESS)
             self.setup_scene()
             self.refresh_ui()
         else:
-            self.obs_status_label.configure(text="⚠ OBS 断开", text_color="red")
+            self.obs_status_label.configure(text="⚠ OBS 断开", text_color=DANGER)
 
     def setup_scene(self):
         if not self.obs or not self.obs.connected:
@@ -1487,7 +1511,7 @@ class ManagerApp:
         title.grid(row=0, column=0, sticky=tk.W, padx=15, pady=10)
 
         self.obs_status_label = ctk.CTkLabel(header, text="OBS: 检测中",
-                                             text_color="orange", font=("微软雅黑", 10))
+                                             text_color=WARNING, font=("微软雅黑", 10))
         self.obs_status_label.grid(row=0, column=1, sticky=tk.E, padx=(0, 5))
 
         settings_btn = ctk.CTkButton(header, text="⚙", width=32, height=32,
@@ -1500,7 +1524,7 @@ class ManagerApp:
 
     def _create_sidebar(self):
         """创建左侧导航栏"""
-        sidebar = ctk.CTkFrame(self.root, fg_color="#0A0D12", corner_radius=0, width=200)
+        sidebar = ctk.CTkFrame(self.root, fg_color=SIDEBAR_BG, corner_radius=0, width=200)
         sidebar.grid_propagate(False)
         sidebar.columnconfigure(0, weight=1)
 
@@ -1815,7 +1839,7 @@ class ManagerApp:
         status_label.pack(side=tk.LEFT, fill=tk.X, padx=10, pady=3)
 
         # OBS 连接圆点指示
-        self._obs_dot = ctk.CTkLabel(status_frame, text="●", text_color="orange",
+        self._obs_dot = ctk.CTkLabel(status_frame, text="●", text_color=WARNING,
                                      font=("微软雅黑", 9))
         self._obs_dot.pack(side=tk.RIGHT, padx=(0, 5))
         ctk.CTkLabel(status_frame, text="OBS", text_color=TEXT_SECONDARY,
@@ -2398,7 +2422,7 @@ class ManagerApp:
         var_mod = tk.StringVar(value=self.hotkey_modifiers)
         combo = ctk.CTkComboBox(top, variable=var_mod, values=modifier_values, state="readonly", width=10)
         combo.grid(row=1, column=1, padx=10, pady=5)
-        ctk.CTkLabel(top, text="(保存后自动重启服务生效)", text_color="gray").grid(row=2, column=0, columnspan=2, pady=(0, 10))
+        ctk.CTkLabel(top, text="(保存后自动重启服务生效)", text_color=TEXT_SECONDARY).grid(row=2, column=0, columnspan=2, pady=(0, 10))
 
         def save():
             try:
@@ -2444,7 +2468,7 @@ class ManagerApp:
         text_area = ctk.CTkTextbox(top, wrap="word", font=("Consolas", 10))
         text_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         status_var = tk.StringVar(value="就绪")
-        status_label = ctk.CTkLabel(top, textvariable=status_var, text_color="gray")
+        status_label = ctk.CTkLabel(top, textvariable=status_var, text_color=TEXT_SECONDARY)
         status_label.pack(padx=10, pady=5, anchor=tk.W)
 
         def process_import():
