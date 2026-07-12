@@ -879,6 +879,29 @@ class MonitorWindow:
         except Exception as e:
             log("系统", f"监视器启动失败 {name}: {e}")
 
+    def _retry_vlc(self, name, canvas, url):
+        """兜底重试：检查 VLC 是否在播放，若未播放则重新连接"""
+        if name not in self.vlc_instances:
+            log("系统", f"[监视器-VLC重试] {name} VLC 实例不存在，跳过")
+            return
+        if not self.win.winfo_exists():
+            return
+        try:
+            _, mp, _ = self.vlc_instances[name]
+            if not mp.is_playing():
+                log("系统", f"[监视器-VLC重试] {name} 未在播放，重新连接 RTMP")
+                mp.stop()
+                media = self.vlc_instance.media_new(url)
+                media.add_option(":network-caching=300")
+                media.add_option(":no-audio")
+                mp.set_media(media)
+                mp.set_hwnd(canvas.winfo_id())
+                mp.play()
+            else:
+                log("系统", f"[监视器-VLC重试] {name} 已在播放，无需重试")
+        except Exception as e:
+            log("系统", f"[监视器-VLC重试] {name} 重试异常: {e}")
+
     # ==================== B站监视器管线 ====================
     def _start_bilibili_pipeline(self, name, canvas):
         """启动 B站 streamlink + ffmpeg → RTMP 管线"""
@@ -917,9 +940,11 @@ class MonitorWindow:
             log("系统", f"[监视器-B站-失败] 启动管线异常: {name} - {e}")
             return
 
-        # 延迟启动 VLC（等待管线推流稳定）
-        self.win.after(3000, self._start_vlc, name, canvas, rtmp_url)
-        log("系统", f"[监视器-B站-步骤6] 安排 VLC 启动: {name}")
+        # 延迟启动 VLC（等待管线推流稳定，B站流需要约4-5秒）
+        self.win.after(6000, self._start_vlc, name, canvas, rtmp_url)
+        # 兜底重试：如果流未就绪导致 VLC 连接失败，10秒后重试
+        self.win.after(10000, self._retry_vlc, name, canvas, rtmp_url)
+        log("系统", f"[监视器-B站-步骤6] 安排 VLC 启动 (6s) + 兜底重试 (10s): {name}")
 
     def _stop_bilibili_pipeline(self, name):
         """停止 B站 streamlink 管线"""
