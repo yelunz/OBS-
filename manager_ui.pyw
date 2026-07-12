@@ -1613,8 +1613,6 @@ class ManagerApp:
                                     font=("微软雅黑", 10), activestyle="none",
                                     borderwidth=0, highlightthickness=0)
         self.pool_list.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
-        self.pool_list.bind("<Double-Button-1>", self._on_pool_double_click)
-        self.pool_list.bind("<Button-3>", self._on_pool_right_click)
 
         # Action buttons
         actions = ctk.CTkFrame(bottom, fg_color="transparent")
@@ -1680,10 +1678,9 @@ class ManagerApp:
 
         store_scroll = ctk.CTkScrollableFrame(store_section, fg_color="transparent")
         store_scroll.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
-        self.store_tree = __class__._create_checkbox_treeview(store_scroll, "store")
+        self.store_tree = CheckboxTreeview(store_scroll)
         self.store_tree.pack(fill=tk.BOTH, expand=True)
-        self.store_tree.bind("<Double-1>", self._on_store_double_click)
-        self.store_tree.bind("<Button-3>", self._on_store_right_click)
+        self.store_tree.bind("<Button-3>", self.on_store_right_click)
 
         # ── 视角列表 (下) ──
         active_section = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
@@ -1703,10 +1700,9 @@ class ManagerApp:
 
         active_scroll = ctk.CTkScrollableFrame(active_section, fg_color="transparent")
         active_scroll.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
-        self.active_tree = __class__._create_checkbox_treeview(active_scroll, "active")
+        self.active_tree = CheckboxTreeview(active_scroll)
         self.active_tree.pack(fill=tk.BOTH, expand=True)
-        self.active_tree.bind("<Double-1>", self._on_active_double_click)
-        self.active_tree.bind("<Button-3>", self._on_active_right_click)
+        self.active_tree.bind("<Button-3>", self.on_active_right_click)
 
         return page
 
@@ -1758,13 +1754,14 @@ class ManagerApp:
                      text_color=TEXT_PRIMARY).pack(side=tk.LEFT, padx=12, pady=8)
         ctk.CTkLabel(filter_bar, text="筛选:", font=("微软雅黑", 9),
                      text_color=TEXT_SECONDARY).pack(side=tk.LEFT, padx=(0, 4))
-        self.log_combo = ctk.CTkComboBox(filter_bar, values=["系统"], width=140,
+        self.log_combo = ctk.CTkComboBox(filter_bar, variable=self.current_log_player,
+                                         state="readonly", values=["系统"], width=140,
                                          font=("微软雅黑", 9), fg_color=ELEVATED_BG,
                                          border_color=BORDER, button_color=ACCENT,
                                          button_hover_color=ACCENT_HOVER,
-                                         dropdown_fg_color=CARD_BG, dropdown_text_color=TEXT_PRIMARY,
-                                         command=self._on_log_filter_changed)
+                                         dropdown_fg_color=CARD_BG, dropdown_text_color=TEXT_PRIMARY)
         self.log_combo.pack(side=tk.LEFT, padx=(0, 8))
+        self.log_combo.configure(command=lambda v: self._refresh_log_view())
         self.log_combo.set("系统")
 
         ctk.CTkCheckBox(filter_bar, text="自动检测", variable=self.auto_detect,
