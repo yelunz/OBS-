@@ -978,6 +978,7 @@ class MonitorWindow:
         height = self.container.winfo_height() - 20
         if width < 100 or height < 100:
             width, height = 960, 600
+        # 平局时优先选更多列 (n=2 时并排而非垂直堆叠)
         best_cols = 1
         best_area = 0
         for cols in range(1, n + 1):
@@ -985,7 +986,7 @@ class MonitorWindow:
             cell_w = width // cols
             cell_h = height // rows
             area = cell_w * cell_h
-            if area > best_area:
+            if area >= best_area:  # 改为 >= : 平局时取更多列
                 best_area = area
                 best_cols = cols
         cols = best_cols
@@ -1017,45 +1018,71 @@ class MonitorWindow:
                 self.empty_label.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
     def _full_cleanup(self):
-        """完全清空所有监视器状态：VLC 实例、网格、管线、截图线程"""
+        """完全清空所有监视器状态：VLC 实例、网格、管线、截图线程
+        注意：本方法可能在子线程被调用，Tk 控件销毁必须通过 after 回到主线程执行
+        """
         log("系统", "[监视器-全清] 开始清理所有状态")
-        # 停止所有 VLC 实例
+        # 收集需要在子线程释放的 VLC 实例 (mp.stop/release 可能阻塞数秒)
+        vlc_to_release = []
         for name in list(self.vlc_instances.keys()):
             _, mp, _ = self.vlc_instances.pop(name)
-            try:
-                mp.stop()
-            except:
-                pass
-            try:
-                mp.release()
-            except:
-                pass
+            vlc_to_release.append(mp)
+        # 在子线程释放 VLC (避免 mp.stop() 阻塞)
+        def _release_vlc_instances():
+            for mp in vlc_to_release:
+                try:
+                    mp.stop()
+                except:
+                    pass
+                try:
+                    mp.release()
+                except:
+                    pass
+        if vlc_to_release:
+            threading.Thread(target=_release_vlc_instances, daemon=True).start()
         # 停止所有 B站管线
         for name in list(self.bilibili_procs.keys()):
             self._stop_bilibili_pipeline(name)
         # 停止所有截图轮询
         for name in list(self.screenshot_running.keys()):
             self._stop_screenshot_monitor(name)
-        # 销毁所有网格 frame
+        # 收集需要销毁的 Tk frame (必须在主线程执行)
+        frames_to_destroy = []
         for name in list(self.grid_widgets.keys()):
             frame, canvas, label = self.grid_widgets.pop(name)
-            try:
-                frame.destroy()
-            except:
-                pass
+            frames_to_destroy.append(frame)
         # 清空 paused_players (历史遗留)
+        paused_to_release = []
         for name in list(self.paused_players.keys()):
             data = self.paused_players.pop(name)
+            paused_to_release.append(data)
+        # 在子线程释放 paused_players 的 VLC
+        def _release_paused_vlc():
+            for data in paused_to_release:
+                try:
+                    if "mp" in data:
+                        data["mp"].stop()
+                        data["mp"].release()
+                except:
+                    pass
+        if paused_to_release:
+            threading.Thread(target=_release_paused_vlc, daemon=True).start()
+            for data in paused_to_release:
+                if "frame" in data:
+                    frames_to_destroy.append(data["frame"])
+        # 在主线程销毁 Tk 控件 (Tkinter 非线程安全)
+        def _destroy_frames():
+            for frame in frames_to_destroy:
+                try:
+                    frame.destroy()
+                except:
+                    pass
+        if frames_to_destroy:
             try:
-                if "mp" in data:
-                    data["mp"].stop()
-                    data["mp"].release()
+                self.win.after(0, _destroy_frames)
             except:
-                pass
-            try:
-                data["frame"].destroy()
-            except:
-                pass
+                # 如果 win 已销毁，直接尝试销毁
+                _destroy_frames()
         # 清空截图相关
         self.screenshot_canvases.clear()
         with self.screenshot_lock:
@@ -1110,6 +1137,13 @@ class MonitorWindow:
             label_height = 25
             canvas.place(x=0, y=0, width=cell_w, height=cell_h - label_height)
             label.place(x=0, y=cell_h - label_height, width=cell_w, height=label_height)
+
+        # 容器未就绪时 (winfo_width 返回 1)，安排一次延迟重试
+        if self.container.winfo_width() <= 1 and not self._closed:
+            try:
+                self.win.after(500, self.refresh)
+            except:
+                pass
 
     def _show_grid(self, player):
         name = player["name"]
@@ -1215,7 +1249,7 @@ class MonitorWindow:
             if not hwnd:
                 return
             media = self.vlc_instance.media_new(url)
-            media.add_option(":network-caching=300")
+            media.add_option(":network-caching=1000")
             media.add_option(":no-audio")
             mp = self.vlc_instance.media_player_new()
             mp.set_media(media)
@@ -1238,7 +1272,7 @@ class MonitorWindow:
                 log("系统", f"[监视器-VLC重试] {name} 未在播放，重新连接 RTMP")
                 mp.stop()
                 media = self.vlc_instance.media_new(url)
-                media.add_option(":network-caching=300")
+                media.add_option(":network-caching=1000")
                 media.add_option(":no-audio")
                 mp.set_media(media)
                 mp.set_hwnd(canvas.winfo_id())
@@ -1364,8 +1398,8 @@ class MonitorWindow:
                 if fail_count == 1:
                     log("系统", f"[监视器-截图-线程] {name} 截图异常: {e}")
 
-            # 约 30fps (33ms)
-            time.sleep(0.033)
+            # 约 10fps (100ms) - 降低轮询频率以减少 OBS WebSocket 压力
+            time.sleep(0.1)
 
         log("系统", f"[监视器-截图-线程] 线程退出: {name}")
 
@@ -1399,7 +1433,7 @@ class MonitorWindow:
                     img_w, img_h = pil_img.size
                     scale = min(w / img_w, h / img_h)
                     new_w, new_h = int(img_w * scale), int(img_h * scale)
-                    pil_img = pil_img.resize((new_w, new_h), Image.LANCZOS)
+                    pil_img = pil_img.resize((new_w, new_h), Image.BILINEAR)
                     photo = ImageTk.PhotoImage(pil_img)
                     canvas.delete("all")
                     # 居中绘制
@@ -1411,9 +1445,9 @@ class MonitorWindow:
             except Exception:
                 pass
 
-        # 继续渲染循环
+        # 继续渲染循环 (100ms - 与截图频率一致)
         if self.screenshot_canvases:
-            self.screenshot_render_id = self.win.after(33, self._screenshot_render_loop)
+            self.screenshot_render_id = self.win.after(100, self._screenshot_render_loop)
         else:
             self.screenshot_render_id = None
 
@@ -2371,9 +2405,13 @@ class ManagerApp:
             return
         player["active"] = True
         log("系统", f"激活选手 {player['name']}，开始创建源并启动推流")
-        self.sync_player(player)
-        self.save_config()
-        def do_start():
+        # sync_player 含多次同步 OBS WebSocket 调用，必须在子线程执行避免冻结 UI
+        def do_sync_and_start():
+            try:
+                self.sync_player(player)
+            except Exception as e:
+                log("系统", f"[激活-sync_player异常] {player['name']}: {e}")
+            self.save_config()
             log("系统", f"启动推流线程: {player['name']}")
             if not start_stream(player, self.obs):
                 time.sleep(2)
@@ -2386,7 +2424,7 @@ class ManagerApp:
                 if player["platform"] in ("twitch", "douyin"):
                     threading.Thread(target=_stream_process_monitor, args=(player, self.obs), daemon=True).start()
             self.root.after(0, self.refresh_ui)
-        threading.Thread(target=do_start, daemon=True).start()
+        threading.Thread(target=do_sync_and_start, daemon=True).start()
         self.refresh_ui()
 
     def deactivate_player(self, player):
