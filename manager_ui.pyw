@@ -7,25 +7,80 @@ import psutil
 from pynput import mouse, keyboard
 import ctypes
 from ctypes import wintypes
-from web_remote import start_web_server
+from web_remote import start_web_server, get_local_ip
 
-# ==================== 现代化 UI 主题 (shadcn/ui Dashboard 风格) ====================
+# ==================== 双主题系统 ====================
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-# 色彩常量
-PAGE_BG = "#1E1E2E"       # 深紫灰底 - 亮度显著提升
-CARD_BG = "#262636"       # 卡片背景 - 比页面稍亮
-ELEVATED_BG = "#313146"   # 悬浮层/输入框
-ACCENT = "#89B4FA"        # 柔蓝 - 猫ppuccin蓝
-ACCENT_HOVER = "#74A8F0"  # 悬停蓝
-SUCCESS = "#A6E3A1"       # 柔绿
-WARNING = "#F9E2AF"       # 柔黄
-DANGER = "#F38BA8"        # 柔红
-TEXT_PRIMARY = "#CDD6F4"  # 主文字 - 高对比度
-TEXT_SECONDARY = "#9399B2" # 次要文字
-BORDER = "#45475A"        # 边框 - 清晰可见
-SIDEBAR_BG = "#181825"    # 侧边栏 - 比页面深一点
+# 暗色主题 (Catppuccin Mocha)
+DARK_THEME = {
+    "PAGE_BG": "#1E1E2E",
+    "CARD_BG": "#262636",
+    "ELEVATED_BG": "#313146",
+    "ACCENT": "#89B4FA",
+    "ACCENT_HOVER": "#74A8F0",
+    "SUCCESS": "#A6E3A1",
+    "WARNING": "#F9E2AF",
+    "DANGER": "#F38BA8",
+    "TEXT_PRIMARY": "#CDD6F4",
+    "TEXT_SECONDARY": "#9399B2",
+    "BORDER": "#45475A",
+    "SIDEBAR_BG": "#181825",
+}
+
+# 浅色主题 (Warm Light)
+LIGHT_THEME = {
+    "PAGE_BG": "#F0F0EB",
+    "CARD_BG": "#FFFFFF",
+    "ELEVATED_BG": "#E8E8E3",
+    "ACCENT": "#3B82F6",
+    "ACCENT_HOVER": "#2563EB",
+    "SUCCESS": "#16A34A",
+    "WARNING": "#CA8A04",
+    "DANGER": "#DC2626",
+    "TEXT_PRIMARY": "#1E1E2E",
+    "TEXT_SECONDARY": "#6B7280",
+    "BORDER": "#D1D5DB",
+    "SIDEBAR_BG": "#E5E5DF",
+}
+
+# 当前主题
+_current_theme = "dark"
+PAGE_BG = DARK_THEME["PAGE_BG"]
+CARD_BG = DARK_THEME["CARD_BG"]
+ELEVATED_BG = DARK_THEME["ELEVATED_BG"]
+ACCENT = DARK_THEME["ACCENT"]
+ACCENT_HOVER = DARK_THEME["ACCENT_HOVER"]
+SUCCESS = DARK_THEME["SUCCESS"]
+WARNING = DARK_THEME["WARNING"]
+DANGER = DARK_THEME["DANGER"]
+TEXT_PRIMARY = DARK_THEME["TEXT_PRIMARY"]
+TEXT_SECONDARY = DARK_THEME["TEXT_SECONDARY"]
+BORDER = DARK_THEME["BORDER"]
+SIDEBAR_BG = DARK_THEME["SIDEBAR_BG"]
+
+# 字体系统
+FONT_FAMILY = "Microsoft YaHei UI"  # 比 Segoe UI 对中文更友好
+FONT_MONO = "Cascadia Code"  # 等宽字体用于日志
+FONT_TITLE = (FONT_FAMILY, 14, "bold")
+FONT_HEADING = (FONT_FAMILY, 12, "bold")
+FONT_BODY = (FONT_FAMILY, 11)
+FONT_BODY_BOLD = (FONT_FAMILY, 11, "bold")
+FONT_SMALL = (FONT_FAMILY, 10)
+FONT_LARGE = (FONT_FAMILY, 24, "bold")
+FONT_XL = (FONT_FAMILY, 26, "bold")
+
+def switch_theme(theme_name):
+    """切换主题并更新全局颜色变量"""
+    global _current_theme, PAGE_BG, CARD_BG, ELEVATED_BG, ACCENT, ACCENT_HOVER
+    global SUCCESS, WARNING, DANGER, TEXT_PRIMARY, TEXT_SECONDARY, BORDER, SIDEBAR_BG
+    src = LIGHT_THEME if theme_name == "light" else DARK_THEME
+    _current_theme = theme_name
+    for key in src:
+        globals()[key] = src[key]
+    ctk.set_appearance_mode(theme_name)
+    _apply_ctk_theme()
 
 # CTk 主题微调
 def _apply_ctk_theme():
@@ -64,7 +119,7 @@ def _apply_ctk_theme():
 _apply_ctk_theme()
 
 def _apply_ttk_theme():
-    """设置 ttk.Treeview 暗色主题样式"""
+    """设置 ttk.Treeview 暗色主题样式 - 彻底消除白框"""
     style = ttk.Style()
     style.theme_use("clam")
     
@@ -74,26 +129,53 @@ def _apply_ttk_theme():
                     foreground=TEXT_PRIMARY,
                     fieldbackground=PAGE_BG,
                     borderwidth=0,
-                    font=("Segoe UI", 10),
-                    rowheight=28)
+                    highlightthickness=0,
+                    font=FONT_BODY,
+                    rowheight=30)
     style.configure("Treeview.Heading",
-                    background=CARD_BG,
+                    background=ELEVATED_BG,
                     foreground=TEXT_PRIMARY,
                     borderwidth=0,
-                    font=("Segoe UI", 10, "bold"),
-                    relief="flat")
+                    relief="flat",
+                    font=FONT_BODY_BOLD)
     
     # 选中行
     style.map("Treeview",
               background=[("selected", ACCENT)],
-              foreground=[("selected", "#FFFFFF")])
+              foreground=[("selected", "#FFFFFF")],
+              fieldbackground=[("selected", ACCENT)])
     style.map("Treeview.Heading",
-              background=[("active", ELEVATED_BG)])
+              background=[("active", ACCENT_HOVER)])
+    
+    # 消除 Treeview 的虚线边框和空白边框
+    style.layout("Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
+    style.layout("Treeview.Heading", [
+        ("Treeheading.cell", {"sticky": "nswe"}),
+        ("Treeheading.border", {"sticky": "nswe", "children": [
+            ("Treeheading.padding", {"sticky": "nswe", "children": [
+                ("Treeheading.image", {"side": "right", "sticky": ""}),
+                ("Treeheading.text", {"sticky": "we"})
+            ]})
+        ]})
+    ])
+    
+    # CheckboxTreeview 专用样式
+    style.configure("Checkbox.Treeview", background=PAGE_BG, foreground=TEXT_PRIMARY,
+                    fieldbackground=PAGE_BG, borderwidth=0, highlightthickness=0)
+    
+    # 滚动条暗色主题
+    style.configure("Vertical.TScrollbar",
+                    background=ELEVATED_BG, troughcolor=PAGE_BG,
+                    bordercolor=PAGE_BG, arrowcolor=TEXT_PRIMARY,
+                    relief="flat", borderwidth=0)
+    style.map("Vertical.TScrollbar",
+              background=[("active", ACCENT)])
     
     # 消除 Treeview 的虚线边框
     style.layout("Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
 
-_apply_ttk_theme()
+# ⚠ 不再在模块级调用 _apply_ttk_theme()，避免触发 TK 空白窗口
+# 改为在 ManagerApp.__init__() 中调用
 
 # ==================== VLC 模块检测 ====================
 VLC_AVAILABLE = False
@@ -164,6 +246,27 @@ class OBSController:
             self.connected = False
             log("系统", f"OBS 连接失败: {e}")
             return False, str(e)
+
+    def reconnect(self):
+        """断线重连：先断开旧连接，再重新连接"""
+        log("系统", "[OBS-重连] 开始尝试重连...")
+        try:
+            if self.ws:
+                self.ws.disconnect()
+        except:
+            pass
+        self.connected = False
+        return self.connect()
+
+    def is_alive(self):
+        """检测 OBS WebSocket 是否仍然存活"""
+        if not self.ws or not self.connected:
+            return False
+        try:
+            self.ws.call(requests.GetVersion())
+            return True
+        except:
+            return False
 
     def disconnect(self):
         if self.ws:
@@ -417,6 +520,46 @@ def read_stream_output(proc, prefix, player_name, obs_ref=None, stream_name=None
             pass
     threading.Thread(target=reader, daemon=True).start()
 
+def _stream_process_monitor(player, obs_ref):
+    """监控推流进程：进程退出时自动重启 (最多3次，每次间隔15秒)"""
+    retry_count = 0
+    max_retries = 3
+    while retry_count < max_retries:
+        time.sleep(15)
+        try:
+            # 检查选手是否仍在活跃池且 active
+            if not player.get("active"):
+                log("系统", f"[推流监控] {player['name']} 已关闭，停止监控")
+                return
+            if app and player not in app.active_players:
+                log("系统", f"[推流监控] {player['name']} 已移出活跃池，停止监控")
+                return
+            pid = player.get("stream_pid")
+            if not pid:
+                log("系统", f"[推流监控] {player['name']} 无 stream_pid，停止监控")
+                return
+            # 检查进程是否存活
+            try:
+                proc = psutil.Process(pid)
+                if proc.is_running():
+                    continue  # 进程正常，继续监控
+            except psutil.NoSuchProcess:
+                pass
+            # 进程已退出 → 尝试重启
+            retry_count += 1
+            log("系统", f"[推流监控] {player['name']} 推流进程已退出，第 {retry_count}/{max_retries} 次自动重启...")
+            player["stream_pid"] = None
+            if not start_stream(player, obs_ref):
+                time.sleep(3)
+                if not start_stream(player, obs_ref):
+                    log("系统", f"[推流监控] {player['name']} 第 {retry_count} 次重启失败")
+            else:
+                log("系统", f"[推流监控] {player['name']} 第 {retry_count} 次重启成功")
+                retry_count = 0  # 重置计数器，允许无限次恢复
+        except Exception as e:
+            log("系统", f"[推流监控] {player['name']} 监控异常: {e}")
+    log("系统", f"[推流监控] {player['name']} 连续 {max_retries} 次重启失败，停止监控")
+
 def wait_for_mediamtx(host='localhost', port=1935, timeout=10):
     start = time.time()
     while time.time() - start < timeout:
@@ -463,7 +606,9 @@ def start_stream(player, obs=None):
         player["stream_pid"] = p.pid
         read_stream_output(p, "", name, obs, sn)
     else:
-        return False
+        # bilibili / custom_web: 使用 OBS 浏览器源，无需 streamlink 管线
+        log("系统", f"[推流-跳过] {name} 平台={plat} 使用 OBS 浏览器源，无需启动推流管线")
+        return True
 
     return True
 
@@ -713,7 +858,7 @@ class OBSLoginDialog:
         self.top.title("配置 OBS 连接")
         self.top.resizable(False, False)
         self.result = None
-        ctk.CTkLabel(self.top, text="请填写 OBS WebSocket 服务器信息：", font=("Segoe UI", 10)).grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 5))
+        ctk.CTkLabel(self.top, text="请填写 OBS WebSocket 服务器信息：", font=FONT_BODY).grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 5))
         ctk.CTkLabel(self.top, text="主机:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
         self.host_var = tk.StringVar(value=host)
         ctk.CTkEntry(self.top, textvariable=self.host_var, width=20).grid(row=1, column=1, padx=5, pady=5)
@@ -745,13 +890,19 @@ class OBSLoginDialog:
 
 # ==================== 监视器窗口 ====================
 class MonitorWindow:
-    def __init__(self, parent_app):
+    def __init__(self, parent_app, parent_frame=None):
         self.app = parent_app
-        self.win = ctk.CTkToplevel(parent_app.root)
-        self.win.title("多视角监控")
-        self.win.geometry("960x600")
-        self.win.minsize(400, 300)
-        self.win.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.embedded = parent_frame is not None
+        
+        if self.embedded:
+            self.win = parent_frame
+            # CTkFrame 没有 protocol() 方法，无需处理关闭
+        else:
+            self.win = ctk.CTkToplevel(parent_app.root)
+            self.win.title("多视角监控")
+            self.win.geometry("960x600")
+            self.win.minsize(400, 300)
+            self.win.protocol("WM_DELETE_WINDOW", self.on_close)
         self.players = []
         self.grid_widgets = {}
         self.vlc_instances = {}
@@ -778,17 +929,31 @@ class MonitorWindow:
             except:
                 self.vlc_instance = None
 
-        toolbar = ctk.CTkFrame(self.win, fg_color=CARD_BG, corner_radius=8)
-        toolbar.pack(fill=tk.X, side=tk.TOP, pady=2)
-        ctk.CTkButton(toolbar, text="🔄 刷新所有", command=self.refresh_all, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=5)
+        if not self.embedded:
+            toolbar = ctk.CTkFrame(self.win, fg_color=CARD_BG, corner_radius=8)
+            toolbar.pack(fill=tk.X, side=tk.TOP, pady=2)
+            ctk.CTkButton(toolbar, text="刷新所有", command=self.refresh_all, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=5)
 
         self.container = ttk.Frame(self.win)
         self.container.pack(fill=tk.BOTH, expand=True)
-        self.empty_label = ctk.CTkLabel(self.container, text="暂无推流", font=("Segoe UI", 16), text_color=TEXT_SECONDARY)
+        self.empty_label = ctk.CTkLabel(self.container, text="暂无推流", font=FONT_TITLE, text_color=TEXT_SECONDARY)
         self._start_mouse_listener()
         self.win.bind("<Configure>", self._on_resize)
         self.after_id = None
+        self._refresh_loop_id = None
+        self._tk_widgets = []  # 需要主题更新的 tk 原生控件
         self.refresh()
+        # 启动周期性刷新循环：每3秒检测新增/消失的活跃选手
+        self._start_refresh_loop()
+
+    def apply_theme(self):
+        """主题切换时更新所有 tk 原生控件的颜色"""
+        for widget, attr, light_val, dark_val in self._tk_widgets:
+            try:
+                val = light_val if _current_theme == "light" else dark_val
+                widget.configure(**{attr: val})
+            except:
+                pass
 
     def _on_resize(self, event):
         if self.after_id:
@@ -839,6 +1004,76 @@ class MonitorWindow:
             if self.empty_label:
                 self.empty_label.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
+    def _full_cleanup(self):
+        """完全清空所有监视器状态：VLC 实例、网格、管线、截图线程"""
+        log("系统", "[监视器-全清] 开始清理所有状态")
+        # 停止所有 VLC 实例
+        for name in list(self.vlc_instances.keys()):
+            _, mp, _ = self.vlc_instances.pop(name)
+            try:
+                mp.stop()
+            except:
+                pass
+            try:
+                mp.release()
+            except:
+                pass
+        # 停止所有 B站管线
+        for name in list(self.bilibili_procs.keys()):
+            self._stop_bilibili_pipeline(name)
+        # 停止所有截图轮询
+        for name in list(self.screenshot_running.keys()):
+            self._stop_screenshot_monitor(name)
+        # 销毁所有网格 frame
+        for name in list(self.grid_widgets.keys()):
+            frame, canvas, label = self.grid_widgets.pop(name)
+            try:
+                frame.destroy()
+            except:
+                pass
+        # 清空 paused_players (历史遗留)
+        for name in list(self.paused_players.keys()):
+            data = self.paused_players.pop(name)
+            try:
+                if "mp" in data:
+                    data["mp"].stop()
+                    data["mp"].release()
+            except:
+                pass
+            try:
+                data["frame"].destroy()
+            except:
+                pass
+        # 清空截图相关
+        self.screenshot_canvases.clear()
+        with self.screenshot_lock:
+            self.screenshot_frames.clear()
+        # 重置 players 列表 (强制 refresh 重建所有网格)
+        self.players = []
+        log("系统", "[监视器-全清] 所有状态已清空")
+
+    def _start_refresh_loop(self):
+        """周期性刷新：检测新增/消失的活跃选手并自动渲染"""
+        self._stop_refresh_loop()
+        def _loop():
+            if not self.win or not self.win.winfo_exists():
+                self._refresh_loop_id = None
+                return
+            try:
+                self.refresh()
+            except Exception:
+                pass
+            self._refresh_loop_id = self.win.after(3000, _loop)
+        self._refresh_loop_id = self.win.after(3000, _loop)
+
+    def _stop_refresh_loop(self):
+        if self._refresh_loop_id is not None:
+            try:
+                self.win.after_cancel(self._refresh_loop_id)
+            except:
+                pass
+            self._refresh_loop_id = None
+
     def _reposition_cells(self):
         if not self.players:
             return
@@ -866,33 +1101,22 @@ class MonitorWindow:
         plat = player["platform"]
         log("系统", f"[监视器-显示-步骤1] 平台={plat}, 选手={name}")
 
-        if name in self.paused_players:
-            data = self.paused_players.pop(name)
-            frame, canvas, label = data["frame"], data["canvas"], data["label"]
-            self.grid_widgets[name] = (frame, canvas, label)
-            mp = data.get("mp")
-            if mp:
-                try:
-                    mp.play()
-                except:
-                    pass
-            log("系统", f"[监视器-显示-步骤2] 从暂停恢复: {name}")
-            # B站恢复后需重启管线
-            if plat == "bilibili":
-                self._start_bilibili_pipeline(name, canvas)
-            return
-
+        # 已存在则不重复创建
         if name in self.grid_widgets:
             return
 
         frame = ttk.Frame(self.container, borderwidth=1, relief=tk.SUNKEN)
         canvas = tk.Canvas(frame, bg=PAGE_BG)
-        name_label = tk.Label(frame, text=name, bg=ELEVATED_BG, fg=TEXT_PRIMARY, font=("Segoe UI", 9))
+        name_label = tk.Label(frame, text=name, bg=ELEVATED_BG, fg=TEXT_PRIMARY, font=FONT_SMALL)
+        # 注册 tk 控件主题更新
+        self._tk_widgets.append((canvas, "bg", LIGHT_THEME["PAGE_BG"], DARK_THEME["PAGE_BG"]))
+        self._tk_widgets.append((name_label, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
+        self._tk_widgets.append((name_label, "fg", LIGHT_THEME["TEXT_PRIMARY"], DARK_THEME["TEXT_PRIMARY"]))
         frame.place(x=0, y=0, width=100, height=100)
         canvas.place(x=0, y=0, width=100, height=75)
         name_label.place(x=0, y=75, width=100, height=25)
         self.grid_widgets[name] = (frame, canvas, name_label)
-        log("系统", f"[监视器-显示-步骤3] 创建网格: {name}")
+        log("系统", f"[监视器-显示-步骤2] 创建网格: {name}")
 
         if plat == "twitch":
             # Twitch: VLC 播放已有 RTMP 流
@@ -916,14 +1140,14 @@ class MonitorWindow:
                 log("系统", f"[监视器-显示-截图] 启动截图轮询: {name}")
             else:
                 log("系统", f"[监视器-显示-截图-失败] Pillow 未安装，无法截图预览: {name}")
-                canvas.create_text(150, 100, text="Pillow 未安装", fill="gray", font=("Segoe UI", 10))
+                canvas.create_text(150, 100, text="Pillow 未安装", fill="gray", font=FONT_SMALL)
 
     def _hide_grid(self, name):
+        """隐藏并销毁指定视角的网格 (移除 paused_players 机制，直接销毁避免状态不一致)"""
         if name not in self.grid_widgets:
             return
         frame, canvas, label = self.grid_widgets.pop(name)
-        frame.place_forget()
-        log("系统", f"[监视器-隐藏] 隐藏网格: {name}")
+        log("系统", f"[监视器-隐藏] 销毁网格: {name}")
 
         # 停止 B站管线
         if name in self.bilibili_procs:
@@ -933,25 +1157,41 @@ class MonitorWindow:
         if name in self.screenshot_running:
             self._stop_screenshot_monitor(name)
 
+        # 停止并释放 VLC 实例
         if name in self.vlc_instances:
-            inst, mp, _ = self.vlc_instances[name]
-            try:
-                mp.pause()
-            except:
-                pass
-            self.paused_players[name] = {
-                "frame": frame, "canvas": canvas, "label": label,
-                "inst": inst, "mp": mp, "canvas_widget": canvas
-            }
-        else:
+            inst, mp, _ = self.vlc_instances.pop(name)
+            def _release_vlc():
+                try:
+                    mp.stop()
+                except:
+                    pass
+                try:
+                    mp.release()
+                except:
+                    pass
+            # 在子线程释放 VLC，避免阻塞主线程
+            threading.Thread(target=_release_vlc, daemon=True).start()
+
+        # 销毁 frame
+        try:
             frame.destroy()
+        except:
+            pass
 
     def _start_vlc(self, name, canvas, url):
         if not self.vlc_instance or not self.win.winfo_exists():
             return
         if name in self.vlc_instances:
             return
+        # 检查 canvas 是否仍然有效 (避免 _hide_grid 销毁后延迟回调访问无效控件)
+        if name not in self.grid_widgets:
+            log("系统", f"[监视器-VLC] {name} 已不在网格中，取消 VLC 启动")
+            return
         try:
+            _, current_canvas, _ = self.grid_widgets[name]
+            if current_canvas is not canvas:
+                log("系统", f"[监视器-VLC] {name} canvas 已更换，取消旧 VLC 启动")
+                return
             canvas.update_idletasks()
             hwnd = canvas.winfo_id()
             if not hwnd:
@@ -1160,21 +1400,20 @@ class MonitorWindow:
             self.screenshot_render_id = None
 
     def refresh_all(self):
-        log("系统", "[监视器-刷新所有] 停止所有 VLC 实例")
-        for name in list(self.vlc_instances.keys()):
-            _, mp, _ = self.vlc_instances.pop(name)
+        """刷新所有视角：在子线程清理 VLC/管线/截图，避免阻塞主线程"""
+        log("系统", "[监视器-刷新所有] 开始 (子线程清理)")
+        def _do_cleanup():
             try:
-                mp.stop()
-                mp.release()
+                self._full_cleanup()
+            except Exception as e:
+                log("系统", f"[监视器-刷新所有] 清理异常: {e}")
+            # 回到主线程重建网格
+            try:
+                self.win.after(0, self.refresh)
+                log("系统", "[监视器-刷新所有] 清理完成，已触发重建")
             except:
                 pass
-        # 停止所有 B站管线
-        for name in list(self.bilibili_procs.keys()):
-            self._stop_bilibili_pipeline(name)
-        # 停止所有截图轮询
-        for name in list(self.screenshot_running.keys()):
-            self._stop_screenshot_monitor(name)
-        self.refresh()
+        threading.Thread(target=_do_cleanup, daemon=True).start()
 
     def _start_mouse_listener(self):
         def on_click(x, y, button, pressed):
@@ -1204,39 +1443,24 @@ class MonitorWindow:
         if self.mouse_listener:
             self.mouse_listener.stop()
             self.mouse_listener = None
+        # 停止周期性刷新循环
+        self._stop_refresh_loop()
         # 停止截图渲染循环
         if self.screenshot_render_id:
-            self.win.after_cancel(self.screenshot_render_id)
+            try:
+                self.win.after_cancel(self.screenshot_render_id)
+            except:
+                pass
             self.screenshot_render_id = None
-        # 停止所有截图轮询线程
-        for name in list(self.screenshot_running.keys()):
-            self._stop_screenshot_monitor(name)
-        # 停止所有 B站管线
-        for name in list(self.bilibili_procs.keys()):
-            self._stop_bilibili_pipeline(name)
-        # 停止所有 VLC 实例
-        for name in list(self.vlc_instances.keys()):
-            _, mp, _ = self.vlc_instances[name]
+        # 完全清空所有状态 (VLC/管线/截图/网格/paased)
+        self._full_cleanup()
+        if not self.embedded:
+            self.app.monitor_window = None
             try:
-                mp.stop()
-                mp.release()
+                # 使用 after 延迟销毁，避免 CTkToplevel 在协议回调中直接销毁导致的冲突
+                self.win.after(0, self.win.destroy)
             except:
                 pass
-        self.vlc_instances.clear()
-        for name in list(self.paused_players.keys()):
-            data = self.paused_players[name]
-            try:
-                if "mp" in data:
-                    data["mp"].stop()
-                    data["mp"].release()
-            except:
-                pass
-            data["frame"].destroy()
-        self.paused_players.clear()
-        self.screenshot_canvases.clear()
-        self.screenshot_frames.clear()
-        self.bilibili_procs.clear()
-        self.win.destroy()
         log("系统", "[监视器-关闭] 资源清理完成")
 
     def update_if_open(self):
@@ -1288,7 +1512,7 @@ class CheckboxTreeview(ttk.Treeview):
         for item in self.checked:
             if self.exists(item):
                 self.item(item, tags=("checked",))
-        self.tag_configure("checked", background="#a0d2ff")
+        self.tag_configure("checked", background=ACCENT, foreground="#FFFFFF")
 
     def get_checked_names(self):
         names = []
@@ -1344,18 +1568,27 @@ class ManagerApp:
         self.original_scene = None
         self.monitor_window = None
         self.pool_label = None
+        self._theme_registry = []  # 主题色注册表: (widget, attr, light_value, dark_value)
         self.first_run = not os.path.exists(CONFIG_FILE)
         self.load_cfg()
+        _apply_ttk_theme()  # 主题样式初始化（必须在 root 创建后调用）
         self.create_widgets()
-        self.refresh_store_tree()
-        self._update_log_combo()
+        try:
+            self.refresh_store_tree()
+        except Exception as e:
+            log("系统", f"[初始化-错误] refresh_store_tree 失败: {e}")
+        try:
+            self._update_log_combo()
+        except Exception as e:
+            log("系统", f"[初始化-错误] _update_log_combo 失败: {e}")
         if self.first_run or not self.obs_host:
-            self.show_obs_login()
+            self.root.after(200, self.show_obs_login)
         self.root.after(100, self.async_connect_obs)
         self._cleanup_edge_profiles()
         self.refresh_loop()
         self.start_status_monitor()
         self.start_log_consumer()
+        self._start_obs_watchdog()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(2000, self.all_start)
 
@@ -1391,7 +1624,12 @@ class ManagerApp:
         self.obs_pwd = cfg.get("obs_password", "")
         self.max_streams = cfg.get("max_active_streams", DEFAULT_MAX_STREAMS)
         self.hotkey_modifiers = cfg.get("hotkey_modifiers", DEFAULT_HOTKEY_MODIFIERS)
-
+        
+        # 加载主题偏好
+        saved_theme = cfg.get("theme", "dark")
+        if saved_theme != _current_theme:
+            switch_theme(saved_theme)
+        
         players_raw = cfg.get("players", [])
         self.players = []
         self.active_players = []
@@ -1488,20 +1726,22 @@ class ManagerApp:
         header = ctk.CTkFrame(self.root, fg_color=SIDEBAR_BG, corner_radius=0, height=48)
         header.grid(row=0, column=0, columnspan=2, sticky="ew")
         header.grid_propagate(False)
+        self._register_theme(header, "fg_color", LIGHT_THEME["SIDEBAR_BG"], DARK_THEME["SIDEBAR_BG"])
 
         brand = ctk.CTkFrame(header, fg_color="transparent")
         brand.pack(side=tk.LEFT, padx=(16, 0))
-        ctk.CTkLabel(brand, text="OBS MultiView", font=("Segoe UI", 14, "bold"),
+        ctk.CTkLabel(brand, text="OBS MultiView", font=FONT_TITLE,
                      text_color=TEXT_PRIMARY).pack(side=tk.LEFT)
 
-        self.obs_status_label = ctk.CTkLabel(header, text="", font=("Segoe UI", 10))
+        self.obs_status_label = ctk.CTkLabel(header, text="", font=FONT_SMALL)
         return header
 
     # ==================== Sidebar ====================
     def _create_sidebar(self):
-        sidebar = ctk.CTkFrame(self.root, fg_color=SIDEBAR_BG, corner_radius=0, width=200)
+        sidebar = ctk.CTkFrame(self.root, fg_color=SIDEBAR_BG, corner_radius=0, width=220)
         sidebar.grid(row=1, column=0, sticky="ns")
         sidebar.grid_propagate(False)
+        self._register_theme(sidebar, "fg_color", LIGHT_THEME["SIDEBAR_BG"], DARK_THEME["SIDEBAR_BG"])
         sidebar.rowconfigure(4, weight=1)
 
         nav_items = [
@@ -1516,7 +1756,7 @@ class ManagerApp:
             btn = ctk.CTkButton(sidebar, text=label,
                                 anchor="w", fg_color="transparent",
                                 hover_color=ELEVATED_BG, text_color=TEXT_SECONDARY,
-                                font=("Segoe UI", 13), corner_radius=8,
+                                font=FONT_BODY, corner_radius=8,
                                 height=40, command=lambda k=key: self._show_page(k))
             btn.grid(row=i, column=0, sticky="ew", padx=10, pady=3)
             self._nav_buttons[key] = btn
@@ -1527,16 +1767,34 @@ class ManagerApp:
 
         web_info = ctk.CTkFrame(sidebar, fg_color="transparent")
         web_info.grid(row=6, column=0, sticky="ew", padx=16, pady=(0, 6))
-        ctk.CTkLabel(web_info, text="手机遥控", font=("Segoe UI", 10),
+        ctk.CTkLabel(web_info, text="手机遥控", font=FONT_SMALL,
                      text_color=TEXT_SECONDARY).pack(anchor="w")
-        ctk.CTkLabel(web_info, text="localhost:5000", font=("Segoe UI", 10, "bold"),
-                     text_color=ACCENT).pack(anchor="w")
+        
+        # IP 地址行 + 复制按钮
+        ip_row = ctk.CTkFrame(web_info, fg_color="transparent")
+        ip_row.pack(fill=tk.X, pady=(2, 0))
+        local_ip = get_local_ip()
+        self.web_ip_label = ctk.CTkLabel(ip_row, text=f"{local_ip}:5000", font=FONT_BODY_BOLD,
+                                          text_color=ACCENT)
+        self.web_ip_label.pack(side=tk.LEFT)
+        ctk.CTkButton(ip_row, text="复制", command=self._copy_web_ip,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#FFFFFF",
+                      font=FONT_SMALL, corner_radius=5, height=24, width=44).pack(side=tk.RIGHT)
+
+        # 主题切换
+        theme_row = ctk.CTkFrame(sidebar, fg_color="transparent")
+        theme_row.grid(row=7, column=0, sticky="ew", padx=16, pady=(0, 4))
+        self.theme_btn = ctk.CTkButton(theme_row, text="☀ 浅色主题" if _current_theme == "dark" else "☾ 暗色主题",
+                                        command=self._toggle_theme, fg_color=ELEVATED_BG,
+                                        hover_color=ACCENT_HOVER, text_color=TEXT_PRIMARY,
+                                        font=FONT_SMALL, corner_radius=6, height=30)
+        self.theme_btn.pack(fill=tk.X)
 
         # 设置按钮
         ctk.CTkButton(sidebar, text="设置", command=self.show_settings,
-                      fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER,
-                      text_color=TEXT_PRIMARY, font=("Segoe UI", 11),
-                      corner_radius=7, height=34).grid(row=7, column=0, sticky="ew", padx=10, pady=(4, 12))
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                      text_color="#FFFFFF",
+                      font=FONT_BODY_BOLD, corner_radius=8, height=38).grid(row=8, column=0, sticky="ew", padx=16, pady=(4, 12))
 
         return sidebar
 
@@ -1559,9 +1817,9 @@ class ManagerApp:
         page.grid(row=0, column=0, sticky="nsew")
         page.columnconfigure(0, weight=1)
         page.rowconfigure(0, weight=0)  # stats
-        page.rowconfigure(1, weight=0)  # actions
-        page.rowconfigure(2, weight=0)  # current view
-        page.rowconfigure(3, weight=1)  # pool + auto-detect
+        page.rowconfigure(1, weight=0)  # current view
+        page.rowconfigure(2, weight=0)  # pool grid
+        page.rowconfigure(3, weight=0)  # auto-detect
 
         # ── Stats Row ──
         stats = ctk.CTkFrame(page, fg_color="transparent")
@@ -1580,146 +1838,199 @@ class ManagerApp:
         for i, (title, val) in enumerate(stats_data):
             card = ctk.CTkFrame(stats, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
             card.grid(row=0, column=i, sticky="ew", padx=4)
+            self._register_frame(card, "card")
             inner = ctk.CTkFrame(card, fg_color="transparent")
             inner.pack(fill=tk.BOTH, expand=True, padx=14, pady=10)
-            ctk.CTkLabel(inner, text=title, font=("Segoe UI", 10),
+            ctk.CTkLabel(inner, text=title, font=FONT_SMALL,
                          text_color=TEXT_SECONDARY).pack(anchor="w")
-            val_lbl = ctk.CTkLabel(inner, text=val, font=("Segoe UI", 24, "bold"), text_color=ACCENT)
+            val_lbl = ctk.CTkLabel(inner, text=val, font=FONT_LARGE, text_color=ACCENT)
             val_lbl.pack(anchor="w", pady=(2, 0))
             self._stat_values[title] = val_lbl
 
-        # ── Action Buttons (moved here, above current view) ──
-        actions = ctk.CTkFrame(page, fg_color="transparent")
-        actions.grid(row=1, column=0, sticky="ew", padx=12, pady=6)
-
-        btn_specs = [
-            ("添加选手", self.add, ACCENT, ACCENT_HOVER),
-            ("快速添加", self.quick_add, ACCENT, ACCENT_HOVER),
-            ("批量导入", self.bulk_import_window, ELEVATED_BG, ACCENT_HOVER),
-            ("批量推流", self.batch_move_to_active, ELEVATED_BG, ACCENT_HOVER),
-        ]
-        btn_row = ctk.CTkFrame(actions, fg_color="transparent")
-        btn_row.pack(fill=tk.X, pady=(0, 5))
-        for i, (text, cmd, fg, hov) in enumerate(btn_specs):
-            ctk.CTkButton(btn_row, text=text, command=cmd, corner_radius=7,
-                          fg_color=fg, hover_color=hov,
-                          text_color="#FFFFFF" if fg == ACCENT else TEXT_PRIMARY,
-                          font=("Segoe UI", 11), height=34).pack(side=tk.LEFT, padx=(0, 6))
-
-        ctrl_row = ctk.CTkFrame(actions, fg_color="transparent")
-        ctrl_row.pack(fill=tk.X)
-        ctk.CTkButton(ctrl_row, text="上源", command=self.batch_activate, corner_radius=7,
-                      fg_color=SUCCESS, hover_color="#8BCF8A", text_color="#FFFFFF",
-                      font=("Segoe UI", 11), height=34).pack(side=tk.LEFT, padx=(0, 6))
-        ctk.CTkButton(ctrl_row, text="下源", command=self.batch_deactivate, corner_radius=7,
-                      fg_color=DANGER, hover_color="#E07A8A", text_color="#FFFFFF",
-                      font=("Segoe UI", 11), height=34).pack(side=tk.LEFT, padx=(0, 6))
-        
-        ctk.CTkLabel(ctrl_row, text="", width=16).pack(side=tk.LEFT)
-        
-        ctk.CTkButton(ctrl_row, text="重连 OBS", command=self.reconnect_obs, corner_radius=7,
-                      fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER,
-                      text_color=TEXT_PRIMARY, font=("Segoe UI", 11), height=34).pack(side=tk.LEFT, padx=(0, 6))
-        ctk.CTkButton(ctrl_row, text="重启服务", command=self.restart_services, corner_radius=7,
-                      fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER,
-                      text_color=TEXT_PRIMARY, font=("Segoe UI", 11), height=34).pack(side=tk.LEFT, padx=(0, 6))
-        ctk.CTkButton(ctrl_row, text="监视器", command=self.toggle_monitor, corner_radius=7,
-                      fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER,
-                      text_color=TEXT_PRIMARY, font=("Segoe UI", 11), height=34).pack(side=tk.LEFT, padx=(0, 6))
-        ctk.CTkButton(ctrl_row, text="帮助", command=self.show_help, corner_radius=7,
-                      fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER,
-                      text_color=TEXT_PRIMARY, font=("Segoe UI", 11), height=34).pack(side=tk.LEFT)
-
         # ── Current View Card ──
         cur_card = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=BORDER)
-        cur_card.grid(row=2, column=0, sticky="ew", padx=12, pady=6)
+        cur_card.grid(row=1, column=0, sticky="ew", padx=12, pady=6)
+        self._register_frame(cur_card, "card")
         cur_inner = ctk.CTkFrame(cur_card, fg_color="transparent")
         cur_inner.pack(fill=tk.BOTH, padx=20, pady=14)
-        ctk.CTkLabel(cur_inner, text="当前播出视角", font=("Segoe UI", 10),
+        ctk.CTkLabel(cur_inner, text="当前播出视角", font=FONT_SMALL,
                      text_color=TEXT_SECONDARY).pack(anchor="w")
-        self.cur_label = ctk.CTkLabel(cur_inner, text="无", font=("Segoe UI", 26, "bold"),
+        self.cur_label = ctk.CTkLabel(cur_inner, text="无", font=FONT_XL,
                                       text_color=ACCENT)
         self.cur_label.pack(anchor="w", pady=(4, 0))
 
-        # ── Pool + Auto-detect ──
-        bottom = ctk.CTkFrame(page, fg_color="transparent")
-        bottom.grid(row=3, column=0, sticky="nsew", padx=12, pady=(0, 12))
-        bottom.columnconfigure(0, weight=1)
-        bottom.rowconfigure(0, weight=1)
-        bottom.rowconfigure(1, weight=0)
-
-        pool_frame = ctk.CTkFrame(bottom, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
-        pool_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
-        pool_inner = ctk.CTkFrame(pool_frame, fg_color="transparent")
+        # ── Pool Grid (卡片式活跃池) ──
+        pool_section = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
+        pool_section.grid(row=2, column=0, sticky="ew", padx=12, pady=6)
+        self._register_frame(pool_section, "card")
+        pool_inner = ctk.CTkFrame(pool_section, fg_color="transparent")
         pool_inner.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
-        self.pool_label = ctk.CTkLabel(pool_inner, text="活跃池", font=("Segoe UI", 11, "bold"),
+        self.pool_label = ctk.CTkLabel(pool_inner, text="活跃池", font=FONT_BODY_BOLD,
                                        text_color=TEXT_PRIMARY)
-        self.pool_label.pack(anchor="w")
-        self.pool_list = tk.Listbox(pool_inner, bg=PAGE_BG, fg=TEXT_PRIMARY,
-                                    selectbackground=ACCENT, selectforeground="#FFFFFF",
-                                    font=("Segoe UI", 11), activestyle="none",
-                                    borderwidth=0, highlightthickness=0)
-        self.pool_list.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
+        self.pool_label.pack(side=tk.LEFT)
+        ctk.CTkButton(pool_inner, text="+ 添加视角", command=self.show_quick_add_popup,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#FFFFFF",
+                      font=FONT_BODY_BOLD, corner_radius=6, height=28).pack(side=tk.RIGHT)
+        # 卡片网格容器
+        self.pool_grid = ctk.CTkFrame(pool_inner, fg_color="transparent")
+        self.pool_grid.pack(fill=tk.X, pady=(6, 0))
+        self._pool_cards = {}  # name -> (frame, label)
 
-        auto_frame = ctk.CTkFrame(bottom, fg_color="transparent")
-        auto_frame.grid(row=1, column=0, sticky="ew")
+        # ── Auto-detect ──
+        auto_frame = ctk.CTkFrame(page, fg_color="transparent")
+        auto_frame.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 12))
         ctk.CTkCheckBox(auto_frame, text="自动检测推流状态", variable=self.auto_detect,
-                        font=("Segoe UI", 10), text_color=TEXT_SECONDARY,
+                        font=FONT_SMALL, text_color=TEXT_SECONDARY,
                         fg_color=ACCENT, hover_color=ACCENT_HOVER,
                         border_color=BORDER, checkmark_color="#FFFFFF").pack(side=tk.LEFT)
 
         return page
 
+    def _refresh_pool_cards(self):
+        """刷新活跃池卡片网格 (显示池中所有选手，含已关闭的)"""
+        # 清除旧卡片
+        for name in list(self._pool_cards.keys()):
+            frame, _ = self._pool_cards.pop(name)
+            frame.destroy()
+
+        pool = list(self.active_players)
+        if not pool:
+            empty = ctk.CTkLabel(self.pool_grid, text="暂无活跃选手，点击「添加视角」按钮添加", font=FONT_SMALL,
+                                 text_color=TEXT_SECONDARY)
+            empty.grid(row=0, column=0, padx=4, pady=4, sticky="w")
+            self._pool_cards["_empty"] = (empty, empty)
+            return
+
+        # 每行最多4个卡片
+        cols = 4
+        for i, p in enumerate(sorted(pool, key=lambda x: (isinstance(x.get("view_label"), int), x.get("view_label", "")))):
+            row = i // cols
+            col = i % cols
+
+            is_active = p.get("active", False)
+            border_c = ACCENT if is_active else BORDER
+            card = ctk.CTkFrame(self.pool_grid, fg_color=ELEVATED_BG, corner_radius=8, border_width=1, border_color=border_c)
+            card.grid(row=row, column=col, padx=3, pady=3, sticky="ew")
+            self._register_frame(card, "elevated")
+            # 让列等宽
+            self.pool_grid.columnconfigure(col, weight=1, uniform="pool")
+
+            card_inner = ctk.CTkFrame(card, fg_color="transparent")
+            card_inner.pack(fill=tk.X, padx=10, pady=8)
+
+            name_lbl = ctk.CTkLabel(card_inner, text=p["name"], font=FONT_BODY_BOLD,
+                                    text_color=TEXT_PRIMARY)
+            name_lbl.pack(anchor="w")
+
+            status_text = f"视角 {p.get('view_label', '?')}  ● 推流中" if is_active else f"视角 {p.get('view_label', '?')}  ○ 已关闭"
+            status_color = SUCCESS if is_active else TEXT_SECONDARY
+            view_lbl = ctk.CTkLabel(card_inner, text=status_text,
+                                    font=FONT_SMALL, text_color=status_color)
+            view_lbl.pack(anchor="w")
+
+            # 右键菜单
+            card.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
+            card_inner.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
+            name_lbl.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
+            view_lbl.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
+
+            self._pool_cards[p["name"]] = (card, name_lbl)
+
+    def _pool_card_menu(self, event, player):
+        """活跃池卡片右键菜单"""
+        menu = tk.Menu(self.root, tearoff=0, bg=ELEVATED_BG, fg=TEXT_PRIMARY,
+                       activebackground=ACCENT, activeforeground="#FFFFFF",
+                       font=FONT_BODY)
+        if player.get("active"):
+            menu.add_command(label="⏸ 关闭推流", command=lambda: self.deactivate_player(player))
+        else:
+            menu.add_command(label="▶ 启动推流", command=lambda: self.activate_player(player))
+        menu.add_command(label="🎥 切换到此视角", command=lambda: self.switch_to(player))
+        menu.add_command(label="🔄 刷新源", command=lambda: self.refresh_player(player))
+        menu.add_separator()
+        menu.add_command(label="✏ 编辑选手", command=lambda: self.edit_player(player))
+        menu.add_command(label="🌐 打开直播间", command=lambda: self.open_player_url(player))
+        menu.add_separator()
+        menu.add_command(label="📤 移回仓库", command=lambda: self.move_to_store(player))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
     # ==================== Players Page ====================
     def _create_players_page(self):
         page = ctk.CTkFrame(self._content_frame, fg_color="transparent")
         page.grid(row=0, column=0, sticky="nsew")
-        page.rowconfigure(0, weight=6)
-        page.rowconfigure(1, weight=4)
+        page.rowconfigure(0, weight=0)  # toolbar
+        page.rowconfigure(1, weight=6)  # store
+        page.rowconfigure(2, weight=4)  # active
         page.columnconfigure(0, weight=1)
+
+        # ── 工具栏 (所有操作按钮统一放在此处) ──
+        toolbar = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
+        toolbar.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
+        self._register_frame(toolbar, "card")
+        toolbar_inner = ctk.CTkFrame(toolbar, fg_color="transparent")
+        toolbar_inner.pack(fill=tk.X, padx=10, pady=8)
+
+        # 左侧：选手管理操作
+        left_btns = ctk.CTkFrame(toolbar_inner, fg_color="transparent")
+        left_btns.pack(side=tk.LEFT)
+        ctk.CTkLabel(left_btns, text="选手操作", font=FONT_BODY_BOLD,
+                     text_color=ACCENT).pack(side=tk.LEFT, padx=(0, 8))
+        for t, cmd in [("添加选手", self.add), ("快速添加", self.quick_add), ("批量导入", self.bulk_import_window)]:
+            ctk.CTkButton(left_btns, text=t, command=cmd, corner_radius=6,
+                          fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#FFFFFF",
+                          font=FONT_BODY, height=32, width=80).pack(side=tk.LEFT, padx=(0, 6))
+
+        # 分隔线
+        ctk.CTkFrame(toolbar_inner, fg_color=BORDER, width=1, height=28).pack(side=tk.LEFT, padx=10)
+
+        # 中间：批量推流 (仓库页仅保留批量推流，启动/关闭请在仪表盘活跃池操作)
+        mid_btns = ctk.CTkFrame(toolbar_inner, fg_color="transparent")
+        mid_btns.pack(side=tk.LEFT)
+        ctk.CTkLabel(mid_btns, text="推流", font=FONT_BODY_BOLD,
+                     text_color=ACCENT).pack(side=tk.LEFT, padx=(0, 8))
+        ctk.CTkButton(mid_btns, text="批量推流", command=self.batch_move_to_active, corner_radius=6,
+                      fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER, text_color=TEXT_PRIMARY,
+                      font=FONT_BODY, height=32, width=80).pack(side=tk.LEFT, padx=(0, 6))
+
+        # 右侧：系统操作
+        ctk.CTkFrame(toolbar_inner, fg_color=BORDER, width=1, height=28).pack(side=tk.RIGHT, padx=10)
+        right_btns = ctk.CTkFrame(toolbar_inner, fg_color="transparent")
+        right_btns.pack(side=tk.RIGHT)
+        for t, cmd in [("重连 OBS", self.reconnect_obs), ("重启服务", self.restart_services)]:
+            ctk.CTkButton(right_btns, text=t, command=cmd, corner_radius=6,
+                          fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER, text_color=TEXT_PRIMARY,
+                          font=FONT_BODY, height=32, width=80).pack(side=tk.LEFT, padx=(0, 6))
 
         # ── 选手仓库 (上) ──
         store_section = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
-        store_section.grid(row=0, column=0, sticky="nsew", padx=12, pady=(12, 4))
+        store_section.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 4))
+        self._register_frame(store_section, "card")
 
         store_header = ctk.CTkFrame(store_section, fg_color="transparent")
         store_header.pack(fill=tk.X, padx=12, pady=(10, 4))
-        ctk.CTkLabel(store_header, text="选手仓库", font=("Segoe UI", 11, "bold"),
+        ctk.CTkLabel(store_header, text="选手仓库", font=FONT_HEADING,
                      text_color=TEXT_PRIMARY).pack(side=tk.LEFT)
-        for t, cmd in [("添加", self.add), ("快速添加", self.quick_add), ("导入", self.bulk_import_window)]:
-            ctk.CTkButton(store_header, text=t, command=cmd, corner_radius=6,
-                          fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER, text_color=TEXT_PRIMARY,
-                          font=("Segoe UI", 10), height=28, width=56).pack(side=tk.RIGHT, padx=(0, 4))
 
-        store_scroll = ctk.CTkScrollableFrame(store_section, fg_color="transparent")
-        store_scroll.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
-        self.store_tree = CheckboxTreeview(store_scroll, columns=("sel", "name", "platform", "status", "key"),
-                                             checkbox_col="#1", show="headings")
-        self.store_tree.pack(fill=tk.BOTH, expand=True)
+        # 使用普通 Frame + 手动滚动条，避免 CTkScrollableFrame 与 Treeview 滚动冲突
+        store_tree_frame = ctk.CTkFrame(store_section, fg_color="transparent")
+        store_tree_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        store_tree_frame.columnconfigure(0, weight=1)
+        store_tree_frame.rowconfigure(0, weight=1)
+        
+        self.store_tree = CheckboxTreeview(store_tree_frame, columns=("sel", "name", "platform", "status", "key"),
+                                             checkbox_col="#1", show="headings", height=8)
+        self.store_tree.grid(row=0, column=0, sticky="nsew")
+        
+        store_scrollbar = ttk.Scrollbar(store_tree_frame, orient="vertical", command=self.store_tree.yview)
+        store_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.store_tree.configure(yscrollcommand=store_scrollbar.set)
         self.store_tree.bind("<Button-3>", self.on_store_right_click)
 
-        # ── 视角列表 (下) ──
-        active_section = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
-        active_section.grid(row=1, column=0, sticky="nsew", padx=12, pady=(4, 12))
-
-        active_header = ctk.CTkFrame(active_section, fg_color="transparent")
-        active_header.pack(fill=tk.X, padx=12, pady=(10, 4))
-        ctk.CTkLabel(active_header, text="视角列表", font=("Segoe UI", 11, "bold"),
-                     text_color=TEXT_PRIMARY).pack(side=tk.LEFT)
-        for t, cmd in [("上源", self.batch_activate), ("下源", self.batch_deactivate), ("推流", self.batch_move_to_active)]:
-            fg = SUCCESS if t == "上源" else (DANGER if t == "下源" else ELEVATED_BG)
-            hv = "#8BCF8A" if t == "上源" else ("#E07A8A" if t == "下源" else ACCENT_HOVER)
-            tc = "#FFFFFF" if t in ("上源", "下源") else TEXT_PRIMARY
-            ctk.CTkButton(active_header, text=t, command=cmd, corner_radius=6,
-                          fg_color=fg, hover_color=hv, text_color=tc,
-                          font=("Segoe UI", 10), height=28, width=56).pack(side=tk.RIGHT, padx=(0, 4))
-
-        active_scroll = ctk.CTkScrollableFrame(active_section, fg_color="transparent")
-        active_scroll.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
-        self.active_tree = CheckboxTreeview(active_scroll, columns=("sel", "name", "platform", "source", "status", "key"),
-                                              checkbox_col="#1", show="headings")
-        self.active_tree.pack(fill=tk.BOTH, expand=True)
-        self.active_tree.bind("<Button-3>", self.on_active_right_click)
+        # ── 选手仓库占满全页 ──
+        # 视角列表已移除，仓库为唯一展示区
 
         return page
 
@@ -1728,32 +2039,40 @@ class ManagerApp:
         page = ctk.CTkFrame(self._content_frame, fg_color="transparent")
         page.grid(row=0, column=0, sticky="nsew")
         page.columnconfigure(0, weight=1)
-        page.rowconfigure(0, weight=1)
+        page.rowconfigure(0, weight=1)  # embedded monitor
+        page.rowconfigure(1, weight=0)  # bottom bar
 
-        card = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=BORDER,
-                         width=480, height=360)
-        card.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+        # 嵌入监视器容器
+        self.monitor_container = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
+        self.monitor_container.grid(row=0, column=0, sticky="nsew", padx=12, pady=(12, 4))
+        self._register_frame(self.monitor_container, "card")
+        self.monitor_placeholder = ctk.CTkLabel(self.monitor_container, text="多视角监控\n\n切换到监视器页面后将自动显示活跃选手画面",
+                                                 font=FONT_TITLE, text_color=TEXT_SECONDARY, justify="center")
+        self.monitor_placeholder.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
-        ctk.CTkLabel(card, text="多视角监控", font=("Segoe UI", 24, "bold"),
-                     text_color=ACCENT).pack(pady=(50, 6))
-        ctk.CTkLabel(card, text="实时查看所有活跃选手的直播画面\n支持 B站 / Twitch / 抖音 / 自定义网页",
-                     font=("Segoe UI", 11), text_color=TEXT_SECONDARY, justify="center").pack(pady=(0, 24))
+        # 底部操作栏
+        bottom_bar = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
+        bottom_bar.grid(row=1, column=0, sticky="ew", padx=12, pady=(4, 12))
+        self._register_frame(bottom_bar, "card")
+        bar_inner = ctk.CTkFrame(bottom_bar, fg_color="transparent")
+        bar_inner.pack(fill=tk.X, padx=12, pady=8)
 
-        ctk.CTkButton(card, text="打开监视器", command=self.toggle_monitor,
-                      corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                      text_color="#FFFFFF", font=("Segoe UI", 13, "bold"),
-                      height=44, width=200).pack(pady=(0, 12))
-
-        srvc = ctk.CTkFrame(card, fg_color="transparent")
-        srvc.pack(pady=(0, 20))
-        ctk.CTkButton(srvc, text="重连 OBS", command=self.reconnect_obs, corner_radius=6,
+        ctk.CTkButton(bar_inner, text="弹出独立窗口", command=self.toggle_monitor, corner_radius=6,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#FFFFFF",
+                      font=FONT_BODY, height=32, width=120).pack(side=tk.LEFT, padx=(0, 8))
+        ctk.CTkButton(bar_inner, text="刷新", command=self._refresh_embedded_monitor, corner_radius=6,
                       fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER, text_color=TEXT_PRIMARY,
-                      font=("Segoe UI", 11), height=30, width=110).pack(side=tk.LEFT, padx=4)
-        ctk.CTkButton(srvc, text="重启服务", command=self.restart_services, corner_radius=6,
-                      fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER, text_color=TEXT_PRIMARY,
-                      font=("Segoe UI", 11), height=30, width=110).pack(side=tk.LEFT, padx=4)
+                      font=FONT_BODY, height=32, width=80).pack(side=tk.LEFT)
+
+        ctk.CTkLabel(bar_inner, text="提示：点击选手画面可切换视角", font=FONT_SMALL,
+                     text_color=TEXT_SECONDARY).pack(side=tk.RIGHT)
 
         return page
+
+    def _refresh_embedded_monitor(self):
+        """刷新嵌入的监视器"""
+        if self.monitor_window and self.monitor_window.embedded:
+            self.monitor_window.refresh()
 
     # ==================== Logs Page ====================
     def _create_logs_page(self):
@@ -1767,13 +2086,13 @@ class ManagerApp:
         filter_bar = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
         filter_bar.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 4))
 
-        ctk.CTkLabel(filter_bar, text="日志", font=("Segoe UI", 11, "bold"),
+        ctk.CTkLabel(filter_bar, text="日志", font=FONT_BODY_BOLD,
                      text_color=TEXT_PRIMARY).pack(side=tk.LEFT, padx=12, pady=8)
-        ctk.CTkLabel(filter_bar, text="筛选:", font=("Segoe UI", 10),
+        ctk.CTkLabel(filter_bar, text="筛选:", font=FONT_SMALL,
                      text_color=TEXT_SECONDARY).pack(side=tk.LEFT, padx=(0, 4))
         self.log_combo = ctk.CTkComboBox(filter_bar, variable=self.current_log_player,
                                          state="readonly", values=["系统"], width=140,
-                                         font=("Segoe UI", 11), fg_color=ELEVATED_BG,
+                                         font=FONT_BODY, fg_color=ELEVATED_BG,
                                          border_color=BORDER, button_color=ACCENT,
                                          button_hover_color=ACCENT_HOVER,
                                          dropdown_fg_color=CARD_BG, dropdown_text_color=TEXT_PRIMARY)
@@ -1782,15 +2101,16 @@ class ManagerApp:
         self.log_combo.set("系统")
 
         ctk.CTkCheckBox(filter_bar, text="自动检测", variable=self.auto_detect,
-                        font=("Segoe UI", 10), text_color=TEXT_SECONDARY,
+                        font=FONT_SMALL, text_color=TEXT_SECONDARY,
                         fg_color=ACCENT, hover_color=ACCENT_HOVER,
                         border_color=BORDER, checkmark_color="#FFFFFF").pack(side=tk.RIGHT, padx=12)
 
         # Log viewer
         log_container = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
         log_container.grid(row=1, column=0, sticky="nsew", padx=12, pady=(4, 12))
+        self._register_frame(log_container, "card")
 
-        self.log_text = ctk.CTkTextbox(log_container, font=("Consolas", 11),
+        self.log_text = ctk.CTkTextbox(log_container, font=FONT_BODY,
                                        fg_color="transparent", text_color=TEXT_PRIMARY,
                                        border_width=0, wrap="word")
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
@@ -1803,15 +2123,16 @@ class ManagerApp:
         bar = ctk.CTkFrame(self.root, fg_color=SIDEBAR_BG, corner_radius=0, height=28)
         bar.grid(row=2, column=0, columnspan=2, sticky="ew")
         bar.grid_propagate(False)
+        self._register_theme(bar, "fg_color", LIGHT_THEME["SIDEBAR_BG"], DARK_THEME["SIDEBAR_BG"])
 
         ctk.CTkLabel(bar, textvariable=self.status_var, anchor="w",
-                     text_color=TEXT_SECONDARY, font=("Segoe UI", 10)).pack(side=tk.LEFT, padx=12)
+                     text_color=TEXT_SECONDARY, font=FONT_SMALL).pack(side=tk.LEFT, padx=12)
 
         # 右侧指示器
         ctk.CTkLabel(bar, text="localhost:5000", text_color=ACCENT,
-                     font=("Segoe UI", 10)).pack(side=tk.RIGHT, padx=(0, 12))
+                     font=FONT_SMALL).pack(side=tk.RIGHT, padx=(0, 12))
         ctk.CTkLabel(bar, text="▸", text_color=TEXT_SECONDARY,
-                     font=("Segoe UI", 10)).pack(side=tk.RIGHT, padx=(0, 4))
+                     font=FONT_SMALL).pack(side=tk.RIGHT, padx=(0, 4))
 
         return bar
 
@@ -1826,15 +2147,39 @@ class ManagerApp:
                 btn.configure(fg_color=ACCENT, text_color="#FFFFFF")
             else:
                 btn.configure(fg_color="transparent", text_color=TEXT_SECONDARY)
+        
+        # 切换到监视器页面时，初始化嵌入监视器
+        if name == "monitor":
+            self._ensure_embedded_monitor()
+        # 离开监视器页面时，清理嵌入监视器
+        elif name != "monitor" and self.monitor_window and self.monitor_window.embedded:
+            self.monitor_window.on_close()
+            self.monitor_window = None
+            if hasattr(self, 'monitor_placeholder'):
+                self.monitor_placeholder.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+
+    def _ensure_embedded_monitor(self):
+        """确保嵌入监视器已初始化"""
+        if not VLC_AVAILABLE:
+            return
+        if self.monitor_window and self.monitor_window.embedded:
+            self.monitor_window.refresh()
+            return
+        # 清理旧的独立监视器
+        if self.monitor_window and not self.monitor_window.embedded:
+            self.monitor_window.on_close()
+            self.monitor_window = None
+        # 创建新的嵌入监视器
+        self.monitor_window = MonitorWindow(self, parent_frame=self.monitor_container)
+        if hasattr(self, 'monitor_placeholder'):
+            self.monitor_placeholder.place_forget()
+        # 延迟刷新，确保容器尺寸已就绪
+        self.root.after(300, lambda: self.monitor_window and self.monitor_window.refresh())
 
     # ---------- 辅助获取勾选 ----------
     def get_selected_store_players(self):
         names = self.store_tree.get_checked_names()
         return [p for p in self.players if p["name"] in names]
-
-    def get_selected_active_players(self):
-        names = self.active_tree.get_checked_names()
-        return [p for p in self.active_players if p["name"] in names]
 
     def batch_move_to_active(self):
         selected = self.get_selected_store_players()
@@ -1844,37 +2189,7 @@ class ManagerApp:
         for player in selected:
             self.move_to_active(player)
         self.store_tree.clear_checked()
-        self.set_status(f"已添加 {len(selected)} 个选手到视角列表")
-
-    def batch_activate(self):
-        selected = self.get_selected_active_players()
-        if not selected:
-            messagebox.showinfo("提示", "请先在视角列表中勾选选手")
-            return
-        to_activate = [p for p in selected if p["platform"] in ("twitch",) and not p["active"]]
-        if not to_activate:
-            messagebox.showinfo("提示", "所选选手无需上源或平台不支持")
-            return
-        current_active = sum(1 for p in self.active_players if p.get("active"))
-        free = self.max_streams - current_active
-        if len(to_activate) > free:
-            messagebox.showwarning("限制", f"活跃池剩余 {free} 个名额，只能上源 {free} 个选手")
-            to_activate = to_activate[:free]
-        for player in to_activate:
-            self.activate_player(player)
-        self.active_tree.clear_checked()
-        self.set_status(f"已上源 {len(to_activate)} 个选手")
-
-    def batch_deactivate(self):
-        selected = self.get_selected_active_players()
-        if not selected:
-            messagebox.showinfo("提示", "请先在视角列表中勾选选手")
-            return
-        to_deactivate = [p for p in selected if p["platform"] in ("twitch",) and p["active"]]
-        for player in to_deactivate:
-            self.deactivate_player(player)
-        self.active_tree.clear_checked()
-        self.set_status(f"已下源 {len(to_deactivate)} 个选手")
+        self.set_status(f"已添加 {len(selected)} 个选手到活跃池")
 
     def refresh_store_tree(self):
         checked_names = self.store_tree.get_checked_names()
@@ -1885,10 +2200,9 @@ class ManagerApp:
 
     def one_click_activate(self, player):
         if player["platform"] not in ("twitch",):
-            messagebox.showinfo("提示", "该平台不支持直接上源")
+            messagebox.showinfo("提示", "该平台不支持直接启动")
             return
         self.move_to_active(player)
-        self.activate_player(player)
 
     def move_to_active(self, player):
         if not self.obs or not self.obs.connected:
@@ -1896,13 +2210,20 @@ class ManagerApp:
             return
         with self.data_lock:
             if player in self.active_players:
+                # 已在活跃池：若未激活则启动推流
+                if not player.get("active"):
+                    self.activate_player(player)
+                return
+            # 检查活跃池名额
+            active_count = sum(1 for p in self.active_players if p.get("active"))
+            if active_count >= self.max_streams:
+                messagebox.showwarning("限制", f"活跃池已满 (最多{self.max_streams}个)")
                 return
             self.active_players.append(player)
-        player["active"] = True
-        if player["platform"] in ("bilibili", "douyin", "custom_web", "twitch"):
-            self.sync_player(player)
         self.save_config()
         self._update_log_combo()
+        # activate_player 会设置 active=True、创建 OBS 源、启动推流管线
+        self.activate_player(player)
         self.refresh_ui()
 
     def move_to_store(self, player):
@@ -1936,53 +2257,89 @@ class ManagerApp:
             name = self.store_tree.item(item, "values")[1]
             player = self.find_player_in_any(name)
             if player:
-                menu = Menu(self.root, tearoff=0)
+                menu = Menu(self.root, tearoff=0,
+                            bg=ELEVATED_BG, fg=TEXT_PRIMARY,
+                            activebackground=ACCENT, activeforeground="#FFFFFF",
+                            borderwidth=0, font=FONT_BODY)
                 menu.add_command(label="✏ 编辑", command=lambda: self.edit_player(player))
                 menu.add_command(label="🗑 删除", command=lambda: self.delete_player(player))
                 menu.add_separator()
                 if player["platform"] in ("bilibili", "custom_web"):
                     menu.add_command(label="🌐 打开直播间", command=lambda: self.open_player_url(player))
-                menu.add_command(label="📥 添加到视角列表", command=lambda: self.move_to_active(player))
+                menu.add_command(label="📥 添加到活跃池", command=lambda: self.move_to_active(player))
                 if player["platform"] in ("twitch",):
-                    menu.add_command(label="🚀 一键上源", command=lambda: self.one_click_activate(player))
-                menu.post(event.x_root, event.y_root)
+                    menu.add_command(label="🚀 一键启动", command=lambda: self.one_click_activate(player))
+                try:
+                    menu.tk_popup(event.x_root, event.y_root)
+                finally:
+                    menu.grab_release()
 
-    def on_active_right_click(self, event):
-        item = self.active_tree.identify_row(event.y)
-        if item:
-            name = self.active_tree.item(item, "values")[1]
-            player = self.find_player_in_any(name)
-            if player:
-                menu = Menu(self.root, tearoff=0)
-                menu.add_command(label="✏ 编辑", command=lambda: self.edit_player(player))
-                if player["platform"] in ("twitch",):
-                    if player.get("active"):
-                        menu.add_command(label="⏸ 下源", command=lambda: self.deactivate_player(player))
-                    else:
-                        menu.add_command(label="▶ 上源", command=lambda: self.activate_player(player))
-                    menu.add_separator()
-                    menu.add_command(label="🔄 刷新源", command=lambda: self.refresh_player(player))
-                    menu.add_command(label="🔍 检测源", command=lambda: self.detect_source(player))
-                else:
-                    menu.add_command(label="🌐 打开直播间", command=lambda: self.open_player_url(player))
-                menu.add_separator()
-                menu.add_command(label="📤 移回仓库", command=lambda: self.move_to_store(player))
-                menu.add_command(label="🎥 切换到此视角", command=lambda: self.switch_to(player))
-                batch_menu = Menu(menu, tearoff=0)
-                selected = self.get_selected_active_players()
-                if selected:
-                    batch_menu.add_command(label="批量上源", command=self.batch_activate)
-                    batch_menu.add_command(label="批量下源", command=self.batch_deactivate)
-                    batch_menu.add_command(label="批量移回仓库", command=lambda: [self.move_to_store(p) for p in selected])
-                menu.add_cascade(label="📋 批量操作", menu=batch_menu)
-                menu.post(event.x_root, event.y_root)
+    # ==================== 仪表盘快速添加视角浮窗 ====================
+    def show_quick_add_popup(self):
+        top = ctk.CTkToplevel(self.root)
+        top.title("添加视角到活跃池")
+        top.geometry("360x420")
+        top.resizable(False, False)
+        top.grab_set()
+        top.configure(fg_color=CARD_BG)
+
+        ctk.CTkLabel(top, text="添加视角到活跃池", font=FONT_TITLE,
+                     text_color=TEXT_PRIMARY).pack(anchor="w", padx=16, pady=(14, 4))
+        ctk.CTkLabel(top, text="勾选仓库中的选手，点击确定后自动添加并启动推流",
+                     font=FONT_SMALL, text_color=TEXT_SECONDARY).pack(anchor="w", padx=16, pady=(0, 10))
+
+        pool_names = {p["name"] for p in self.active_players}
+        candidates = [p for p in self.players if p["name"] not in pool_names]
+
+        if not candidates:
+            ctk.CTkLabel(top, text="仓库中无可添加的选手", font=FONT_BODY,
+                         text_color=TEXT_SECONDARY).pack(expand=True)
+            ctk.CTkButton(top, text="关闭", command=top.destroy, corner_radius=6,
+                          fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#FFFFFF",
+                          font=FONT_BODY).pack(pady=12)
+            return
+        
+        list_frame = ctk.CTkScrollableFrame(top, fg_color="transparent")
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
+        
+        check_vars = {}
+        for p in candidates:
+            row = ctk.CTkFrame(list_frame, fg_color="transparent")
+            row.pack(fill=tk.X, pady=2)
+            var = tk.BooleanVar(value=False)
+            check_vars[p["name"]] = var
+            cb = ctk.CTkCheckBox(row, text=f"{p['name']} ({p['platform']})", variable=var,
+                                 font=FONT_BODY, text_color=TEXT_PRIMARY,
+                                 fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                                 border_color=BORDER, checkmark_color="#FFFFFF")
+            cb.pack(side=tk.LEFT)
+        
+        def confirm():
+            added = []
+            for p in candidates:
+                if check_vars.get(p["name"], tk.BooleanVar()).get():
+                    self.move_to_active(p)
+                    added.append(p["name"])
+            top.destroy()
+            if added:
+                self.set_status(f"已添加 {len(added)} 个选手到活跃池")
+            self.refresh_ui()
+        
+        btn_frame = ctk.CTkFrame(top, fg_color="transparent")
+        btn_frame.pack(fill=tk.X, padx=16, pady=(0, 12))
+        ctk.CTkButton(btn_frame, text="确定", command=confirm, corner_radius=6,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#FFFFFF",
+                      font=FONT_BODY_BOLD, height=34).pack(side=tk.RIGHT, padx=(8, 0))
+        ctk.CTkButton(btn_frame, text="取消", command=top.destroy, corner_radius=6,
+                      fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER, text_color=TEXT_PRIMARY,
+                      font=FONT_BODY, height=34).pack(side=tk.RIGHT)
 
     # ---------- 核心操作 ----------
     def activate_player(self, player):
-        if player["platform"] not in ("twitch",) or player.get("active"):
+        if player.get("active"):
             return
         if not self.obs or not self.obs.connected:
-            messagebox.showwarning("提示", "OBS 未连接，无法上源")
+            messagebox.showwarning("提示", "OBS 未连接，无法启动")
             return
         active_count = sum(1 for p in self.active_players if p.get("active"))
         if active_count >= self.max_streams:
@@ -1999,12 +2356,17 @@ class ManagerApp:
                 if not start_stream(player, self.obs):
                     self.stream_status_cache[player["name"]] = False
                     log("系统", f"推流启动失败: {player['name']}")
+            else:
+                log("系统", f"推流启动成功: {player['name']}")
+                # 启动推流进程监控 (仅 Twitch/抖音 需要，浏览器源平台无需)
+                if player["platform"] in ("twitch", "douyin"):
+                    threading.Thread(target=_stream_process_monitor, args=(player, self.obs), daemon=True).start()
             self.root.after(0, self.refresh_ui)
         threading.Thread(target=do_start, daemon=True).start()
         self.refresh_ui()
 
     def deactivate_player(self, player):
-        if player["platform"] not in ("twitch",):
+        if not player.get("active"):
             return
         if self.get_current_display_name() == player["name"]:
             if player.get("obs_source_name"):
@@ -2159,44 +2521,17 @@ class ManagerApp:
 
         self.refresh_store_tree()
 
-        checked_names = self.active_tree.get_checked_names()
-
-        self.active_tree.delete(*self.active_tree.get_children())
-        for p in sorted(self.active_players, key=lambda x: (isinstance(x["view_label"], int), x["view_label"])):
-            plat = p["platform"]
-            status = "运行中"
-            if plat in ("twitch",):
-                if p.get("active"):
-                    alive = self.stream_status_cache.get(p["name"], True)
-                    status = "● 推流中" if alive else "✕ 推流中断"
-                else:
-                    ok = p.get("source_ok")
-                    if ok is True:
-                        status = "✅ 源可播放"
-                    elif ok is False:
-                        status = "❌ 源不可用"
-                    else:
-                        status = "⏸ 未检测"
-            elif plat in ("bilibili", "douyin", "custom_web"):
-                status = "🌐 网页"
-            if cur_name == p["name"]:
-                status = "★ 当前视角"
-            self.active_tree.insert("", tk.END, values=("☐", p["name"], plat, p.get("obs_source_name", ""), status, p["hotkey"]))
-
-        self.active_tree.set_checked_by_name(checked_names)
-
-        self.pool_list.delete(0, tk.END)
-        for p in sorted(self.active_players, key=lambda x: (isinstance(x["view_label"], int), x["view_label"])):
-            if p.get("active"):
-                self.pool_list.insert(tk.END, f"{p['name']} ({p['view_label']})")
+        self._refresh_pool_cards()
         if self.pool_label:
-            self.pool_label.configure(text=f"活跃池 ({len(self.pool_list.get(0, tk.END))}个)")
+            total = len(self.active_players)
+            active_count = sum(1 for p in self.active_players if p.get("active"))
+            self.pool_label.configure(text=f"活跃池 ({active_count}/{total} 推流中)")
 
         self._update_log_combo()
         self._update_monitor()
 
     def _update_monitor(self):
-        if self.monitor_window:
+        if self.monitor_window and not self.monitor_window.embedded:
             self.monitor_window.update_if_open()
 
     # ---------- 其他 UI 方法 ----------
@@ -2286,9 +2621,14 @@ class ManagerApp:
     # ---------- 日志与状态 ----------
     def _update_log_combo(self):
         names = ["系统"] + [p["name"] for p in self.players] + ["MediaMTX", "Switcher"]
-        self.log_combo.configure(values=names)
-        if self.current_log_player.get() not in names:
-            self.current_log_player.set("系统")
+        # 仅当值发生变化时才更新，避免每2秒刷新导致下拉闪烁
+        if not hasattr(self, '_log_combo_cache'):
+            self._log_combo_cache = None
+        if hasattr(self, 'log_combo') and names != self._log_combo_cache:
+            self._log_combo_cache = list(names)
+            self.log_combo.configure(values=names)
+            if self.current_log_player.get() not in names:
+                self.current_log_player.set("系统")
 
     def _refresh_log_view(self):
         if not hasattr(self, 'log_text'):
@@ -2331,6 +2671,77 @@ class ManagerApp:
             self.refresh_ui()
         self.root.after(2000, self.refresh_loop)
 
+    def _start_obs_watchdog(self):
+        """OBS 连接看门狗：每10秒检测，断线后自动重连"""
+        def watchdog():
+            consecutive_failures = 0
+            while True:
+                time.sleep(10)
+                try:
+                    if self.obs and self.obs.connected:
+                        if self.obs.is_alive():
+                            consecutive_failures = 0
+                            continue
+                        # 连接已断开
+                        log("系统", "[OBS-看门狗] 检测到 OBS 连接断开")
+                        self.obs.connected = False
+                        try:
+                            self.root.after(0, lambda: self._on_obs_disconnected())
+                        except:
+                            pass
+                    # 尝试重连
+                    consecutive_failures += 1
+                    if consecutive_failures > 12:
+                        log("系统", "[OBS-看门狗] 连续重连失败超过12次 (2分钟)，暂停自动重连")
+                        continue
+                    if not self.obs_host:
+                        continue
+                    log("系统", f"[OBS-看门狗] 第 {consecutive_failures} 次尝试重连...")
+                    new_obs = OBSController(self.obs_host, self.obs_port, self.obs_pwd)
+                    ok, err = new_obs.connect()
+                    if ok:
+                        log("系统", "[OBS-看门狗] OBS 重连成功!")
+                        self.obs = new_obs
+                        consecutive_failures = 0
+                        try:
+                            self.root.after(0, lambda: self._on_obs_reconnected())
+                        except:
+                            pass
+                    else:
+                        log("系统", f"[OBS-看门狗] 重连失败: {err}")
+                except Exception as e:
+                    log("系统", f"[OBS-看门狗] 异常: {e}")
+        threading.Thread(target=watchdog, daemon=True).start()
+
+    def _on_obs_disconnected(self):
+        """OBS 断开时的 UI 更新"""
+        try:
+            self.obs_status_label.configure(text="⚠ OBS 断开 (重连中...)", text_color=DANGER)
+            if hasattr(self, '_stat_values') and "OBS 状态" in self._stat_values:
+                self._stat_values["OBS 状态"].configure(text="断开 (重连中...)", text_color=DANGER)
+        except:
+            pass
+
+    def _on_obs_reconnected(self):
+        """OBS 重连成功后的恢复操作"""
+        try:
+            self.obs_status_label.configure(text="✅ OBS 已重连", text_color=SUCCESS)
+            if hasattr(self, '_stat_values') and "OBS 状态" in self._stat_values:
+                self._stat_values["OBS 状态"].configure(text="已连接", text_color=SUCCESS)
+            self.setup_scene()
+            # 重新同步所有活跃选手的 OBS 源
+            with self.data_lock:
+                for p in self.active_players:
+                    if p.get("active"):
+                        try:
+                            self.sync_player(p)
+                        except Exception as e:
+                            log("系统", f"[OBS-重连] 重新同步 {p['name']} 失败: {e}")
+            self.refresh_ui()
+            log("系统", "[OBS-重连] 所有活跃选手源已重新同步")
+        except Exception as e:
+            log("系统", f"[OBS-重连] 恢复操作异常: {e}")
+
     def set_status(self, m, t=3000):
         self.status_var.set(m)
         self.root.after(t, lambda: self.status_var.set("就绪"))
@@ -2352,6 +2763,7 @@ class ManagerApp:
         stop_mediamtx()
         if self.monitor_window:
             self.monitor_window.on_close()
+            self.monitor_window = None
 
     def start_process(self, player):
         if player["platform"] in ("twitch",) and player.get("active"):
@@ -2383,37 +2795,155 @@ class ManagerApp:
         threading.Thread(target=_reconnect, daemon=True).start()
 
     def toggle_monitor(self):
-        if self.monitor_window and self.monitor_window.win.winfo_exists():
-            self.monitor_window.win.destroy()
+        """弹出独立监视器窗口"""
+        # 如果已有独立窗口，关闭它
+        if self.monitor_window and not self.monitor_window.embedded and self.monitor_window.win.winfo_exists():
+            self.monitor_window.on_close()
+            return
+        # 如果嵌入监视器存在，先清理
+        if self.monitor_window and self.monitor_window.embedded:
+            self.monitor_window.on_close()
             self.monitor_window = None
-        else:
-            if not VLC_AVAILABLE:
-                messagebox.showwarning("缺少依赖", "监控功能需要 python-vlc 模块。\npip install python-vlc")
-                return
-            self.monitor_window = MonitorWindow(self)
+            if hasattr(self, 'monitor_placeholder'):
+                self.monitor_placeholder.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+        if not VLC_AVAILABLE:
+            messagebox.showwarning("缺少依赖", "监控功能需要 python-vlc 模块。\npip install python-vlc")
+            return
+        self.monitor_window = MonitorWindow(self)
+
+    def _register_frame(self, widget, role="card"):
+        """注册 CTkFrame 的主题色"""
+        if role == "card":
+            self._register_theme(widget, "fg_color", LIGHT_THEME["CARD_BG"], DARK_THEME["CARD_BG"])
+        elif role == "elevated":
+            self._register_theme(widget, "fg_color", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"])
+        elif role == "sidebar":
+            self._register_theme(widget, "fg_color", LIGHT_THEME["SIDEBAR_BG"], DARK_THEME["SIDEBAR_BG"])
+
+    def _register_label(self, widget):
+        """注册 CTkLabel 的文字色"""
+        self._register_theme(widget, "text_color", LIGHT_THEME["TEXT_PRIMARY"], DARK_THEME["TEXT_PRIMARY"])
+
+    def _register_theme(self, widget, attr, light_val, dark_val):
+        """注册需要主题色更新的控件"""
+        self._theme_registry.append((widget, attr, light_val, dark_val))
+
+    def _register_tk(self, widget, light_bg, dark_bg, light_fg=None, dark_fg=None):
+        """注册 tk 原生控件（Canvas/Label/Listbox）"""
+        self._register_theme(widget, "bg", light_bg, dark_bg)
+        if light_fg is not None:
+            self._register_theme(widget, "fg", light_fg, dark_fg)
+
+    def _apply_theme_colors(self):
+        """直接更新所有已注册控件的颜色，无需重建 UI"""
+        # 更新根窗口
+        try:
+            self.root.configure(fg_color=LIGHT_THEME["PAGE_BG"] if _current_theme == "light" else DARK_THEME["PAGE_BG"])
+        except:
+            pass
+        # 更新所有注册控件
+        for widget, attr, light_val, dark_val in self._theme_registry:
+            try:
+                val = light_val if _current_theme == "light" else dark_val
+                widget.configure(**{attr: val})
+            except Exception:
+                pass
+        # 更新监视器窗口
+        if self.monitor_window:
+            self.monitor_window.apply_theme()
+        self.set_status(f"已切换为{'浅色' if _current_theme == 'light' else '暗色'}模式")
+
+    def _copy_web_ip(self):
+        """复制手机遥控地址到剪贴板"""
+        ip = get_local_ip()
+        addr = f"http://{ip}:5000"
+        self.root.clipboard_clear()
+        self.root.clipboard_append(addr)
+        self.set_status(f"已复制: {addr}")
+
+    def _toggle_theme(self):
+        """切换主题（直接替换颜色，无重建）"""
+        new_theme = "light" if _current_theme == "dark" else "dark"
+        switch_theme(new_theme)
+        _apply_ctk_theme()
+        _apply_ttk_theme()
+        self._apply_theme_colors()
+        # 保存主题偏好
+        try:
+            cfg = {}
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+            cfg["theme"] = new_theme
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
+        except:
+            pass
+        self.theme_btn.configure(text="☀ 浅色主题" if new_theme == "dark" else "☾ 暗色主题")
 
     def show_settings(self):
         top = ctk.CTkToplevel(self.root)
         top.title("系统设置")
+        top.geometry("440x340")
         top.resizable(False, False)
         top.grab_set()
-        ctk.CTkLabel(top, text="最大活跃推流数:", font=("Segoe UI", 10)).grid(row=0, column=0, padx=10, pady=(10, 5), sticky=tk.W)
+        top.configure(fg_color=CARD_BG)
+        
+        # 标题
+        header = ctk.CTkFrame(top, fg_color="transparent")
+        header.pack(fill=tk.X, padx=20, pady=(16, 8))
+        ctk.CTkLabel(header, text="系统设置", font=FONT_TITLE,
+                     text_color=TEXT_PRIMARY).pack(anchor="w")
+        ctk.CTkLabel(header, text="修改配置后自动重启服务生效", font=FONT_SMALL,
+                     text_color=TEXT_SECONDARY).pack(anchor="w", pady=(2, 0))
+        
+        # 内容区
+        content = ctk.CTkFrame(top, fg_color="transparent")
+        content.pack(fill=tk.BOTH, expand=True, padx=20, pady=8)
+        
+        # 最大活跃推流数
+        row1 = ctk.CTkFrame(content, fg_color="transparent")
+        row1.pack(fill=tk.X, pady=6)
+        ctk.CTkLabel(row1, text="最大活跃推流数", font=FONT_BODY,
+                     text_color=TEXT_PRIMARY).pack(side=tk.LEFT)
         var_streams = tk.IntVar(value=self.max_streams)
-        ctk.CTkEntry(top, textvariable=var_streams, width=10).grid(row=0, column=1, padx=10, pady=(10, 5))
-        ctk.CTkLabel(top, text="快捷键修饰键:", font=("Segoe UI", 10)).grid(row=1, column=0, padx=10, pady=5, sticky=tk.W)
-        modifier_values = ["alt+shift", "alt", "ctrl+shift"]
+        ctk.CTkEntry(row1, textvariable=var_streams, width=80, height=32,
+                     font=FONT_BODY, fg_color=ELEVATED_BG, border_color=BORDER).pack(side=tk.RIGHT)
+        
+        # 快捷键修饰键
+        row2 = ctk.CTkFrame(content, fg_color="transparent")
+        row2.pack(fill=tk.X, pady=6)
+        ctk.CTkLabel(row2, text="快捷键修饰键", font=FONT_BODY,
+                     text_color=TEXT_PRIMARY).pack(side=tk.LEFT)
+        modifier_values = ["alt+shift", "alt", "ctrl+shift", "ctrl", "shift", "ctrl+alt"]
         var_mod = tk.StringVar(value=self.hotkey_modifiers)
-        combo = ctk.CTkComboBox(top, variable=var_mod, values=modifier_values, state="readonly", width=10)
-        combo.grid(row=1, column=1, padx=10, pady=5)
-        ctk.CTkLabel(top, text="(保存后自动重启服务生效)", text_color=TEXT_SECONDARY).grid(row=2, column=0, columnspan=2, pady=(0, 10))
-
+        combo = ctk.CTkComboBox(row2, variable=var_mod, values=modifier_values, state="readonly",
+                                width=140, height=32, font=FONT_BODY,
+                                fg_color=ELEVATED_BG, border_color=BORDER,
+                                button_color=ACCENT, button_hover_color=ACCENT_HOVER,
+                                dropdown_fg_color=CARD_BG, dropdown_text_color=TEXT_PRIMARY)
+        combo.pack(side=tk.RIGHT)
+        
+        # OBS 连接信息
+        row3 = ctk.CTkFrame(content, fg_color="transparent")
+        row3.pack(fill=tk.X, pady=6)
+        ctk.CTkLabel(row3, text="OBS 地址", font=FONT_BODY,
+                     text_color=TEXT_PRIMARY).pack(side=tk.LEFT)
+        obs_label = ctk.CTkLabel(row3, text=f"{self.obs_host}:{self.obs_port}",
+                                  font=FONT_BODY, text_color=TEXT_SECONDARY)
+        obs_label.pack(side=tk.RIGHT)
+        
+        # 按钮
+        btn_frame = ctk.CTkFrame(top, fg_color="transparent")
+        btn_frame.pack(fill=tk.X, padx=20, pady=(0, 16))
+        
         def save():
             try:
                 val = int(var_streams.get())
                 if val < 1:
                     raise ValueError
             except:
-                messagebox.showwarning("错误", "请输入正整数")
+                messagebox.showwarning("错误", "请输入正整数", parent=top)
                 return
             self.max_streams = val
             self.hotkey_modifiers = var_mod.get()
@@ -2423,12 +2953,13 @@ class ManagerApp:
             self.restart_services()
             top.destroy()
             self.set_status(f"设置已更新，服务已重启")
-
-        btn_frame = ctk.CTkFrame(top, fg_color="transparent")
-        btn_frame.grid(row=3, column=0, columnspan=2, pady=(0, 10))
-        ctk.CTkButton(btn_frame, text="保存", command=save).pack(side=tk.LEFT, padx=10)
-        ctk.CTkButton(btn_frame, text="取消", command=top.destroy).pack(side=tk.LEFT, padx=10)
-        self.root.wait_window(top)
+        
+        ctk.CTkButton(btn_frame, text="保存", command=save, corner_radius=6,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#FFFFFF",
+                      font=FONT_BODY_BOLD, height=36, width=100).pack(side=tk.RIGHT, padx=(8, 0))
+        ctk.CTkButton(btn_frame, text="取消", command=top.destroy, corner_radius=6,
+                      fg_color=ELEVATED_BG, hover_color=ACCENT_HOVER, text_color=TEXT_PRIMARY,
+                      font=FONT_BODY, height=36, width=100).pack(side=tk.RIGHT)
 
     def show_help(self):
         help_text = "帮助内容省略"
@@ -2446,7 +2977,7 @@ class ManagerApp:
         top.title("批量导入选手")
         top.geometry("600x500")
         top.resizable(True, True)
-        lbl = ctk.CTkLabel(top, text="请粘贴链接或频道名，每行一个：", font=("Segoe UI", 10))
+        lbl = ctk.CTkLabel(top, text="请粘贴链接或频道名，每行一个：", font=FONT_SMALL)
         lbl.pack(padx=10, pady=(10, 5), anchor=tk.W)
         text_area = ctk.CTkTextbox(top, wrap="word", font=("Consolas", 10))
         text_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -2611,7 +3142,7 @@ class ManagerApp:
 
 if __name__ == "__main__":
     root = ctk.CTk()
-    root.geometry("1200x950")
+    root.geometry("1220x950")
     root.minsize(1000, 700)
     ManagerApp(root)
     root.mainloop()

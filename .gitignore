@@ -28,6 +28,7 @@ auto.key
 # IDE
 .vscode/
 .idea/
+.trae/
 *.swp
 *.swo
 

@@ -36,31 +36,37 @@ def index():
 def api_status():
     if _app_ref is None:
         return jsonify({"error": "应用未初始化"}), 500
-    obs_connected = _app_ref.obs and _app_ref.obs.connected
-    current = _app_ref.get_current_display_name()
-    return jsonify({
-        "obs_connected": obs_connected,
-        "active_count": len(_app_ref.active_players),
-        "total_count": len(_app_ref.players),
-        "current_view": current,
-        "local_ip": get_local_ip()
-    })
+    try:
+        obs_connected = _app_ref.obs and _app_ref.obs.connected
+        current = _app_ref.get_current_display_name()
+        return jsonify({
+            "obs_connected": obs_connected,
+            "active_count": len(_app_ref.active_players),
+            "total_count": len(_app_ref.players),
+            "current_view": current,
+            "local_ip": get_local_ip()
+        })
+    except Exception as e:
+        return jsonify({"error": f"内部错误: {e}", "obs_connected": False}), 500
 
 @flask_app.route('/api/players')
 def api_players():
     if _app_ref is None:
         return jsonify({"error": "应用未初始化"}), 500
-    players_data = []
-    for p in _app_ref.players:
-        players_data.append({
-            "name": p["name"],
-            "platform": p["platform"],
-            "hotkey": p["hotkey"],
-            "active": p.get("active", False),
-            "obs_source_name": p.get("obs_source_name", ""),
-            "is_current": (_app_ref.get_current_display_name() == p["name"])
-        })
-    return jsonify({"players": players_data})
+    try:
+        players_data = []
+        for p in _app_ref.players:
+            players_data.append({
+                "name": p["name"],
+                "platform": p["platform"],
+                "hotkey": p["hotkey"],
+                "active": p.get("active", False),
+                "obs_source_name": p.get("obs_source_name", ""),
+                "is_current": (_app_ref.get_current_display_name() == p["name"])
+            })
+        return jsonify({"players": players_data})
+    except Exception as e:
+        return jsonify({"error": f"内部错误: {e}", "players": []}), 500
 
 @flask_app.route('/api/current')
 def api_current():
@@ -73,17 +79,22 @@ def api_current():
 def api_switch():
     if _app_ref is None:
         return jsonify({"error": "应用未初始化"}), 500
-    data = request.get_json()
-    if not data or 'name' not in data:
-        return jsonify({"error": "缺少 name 参数"}), 400
-    name = data['name']
-    player = _app_ref.find_player_in_any(name)
-    if not player:
-        return jsonify({"error": f"选手 {name} 不存在"}), 404
-    if not player.get("active"):
-        return jsonify({"error": f"选手 {name} 未激活"}), 400
-    _app_ref.switch_to(player)
-    return jsonify({"success": True, "switched_to": name})
+    try:
+        data = request.get_json()
+        if not data or 'name' not in data:
+            return jsonify({"error": "缺少 name 参数"}), 400
+        name = data['name']
+        player = _app_ref.find_player_in_any(name)
+        if not player:
+            return jsonify({"error": f"选手 {name} 不存在"}), 404
+        if not player.get("active"):
+            return jsonify({"error": f"选手 {name} 未激活"}), 400
+        if not _app_ref.obs or not _app_ref.obs.connected:
+            return jsonify({"error": "OBS 未连接，无法切换"}), 503
+        _app_ref.switch_to(player)
+        return jsonify({"success": True, "switched_to": name})
+    except Exception as e:
+        return jsonify({"error": f"切换失败: {e}"}), 500
 
 # ==================== WebSocket 截图推送 ====================
 
@@ -91,33 +102,49 @@ _screenshot_thread = None
 _screenshot_running = False
 
 def screenshot_loop():
-    """每 500ms 获取活跃选手截图并推送"""
+    """截图推送循环 - 当前视角每2秒，其他选手每6秒"""
     global _screenshot_running
+    tick = 0
     while _screenshot_running:
         try:
             if _app_ref and _app_ref.obs and _app_ref.obs.connected:
+                cur_name = _app_ref.get_current_display_name()
                 for p in _app_ref.active_players:
                     if not p.get("active"):
                         continue
                     src_name = p.get("obs_source_name")
                     if not src_name:
                         continue
+                    # 当前视角每2秒截图；其他选手每6秒
+                    is_current = (cur_name == p["name"])
+                    if is_current and tick % 1 != 0:
+                        continue
+                    if not is_current and tick % 3 != 0:
+                        continue
                     try:
                         img_b64 = _app_ref.obs.get_source_screenshot(src_name, 480, 270, 50)
                         if img_b64:
+                            # 确保是纯 base64 字符串（去掉 data:image 前缀）
+                            if isinstance(img_b64, str) and img_b64.startswith("data:"):
+                                img_b64 = img_b64.split(",", 1)[-1]
                             socketio.emit('screenshot', {
                                 "name": p["name"],
                                 "platform": p["platform"],
                                 "active": p.get("active", False),
-                                "is_current": (_app_ref.get_current_display_name() == p["name"]),
+                                "is_current": is_current,
                                 "image": img_b64,
                                 "hotkey": p.get("hotkey", "")
                             })
-                    except Exception:
-                        pass  # 截图失败静默跳过
-        except Exception:
-            pass
-        time.sleep(0.5)  # 500ms 间隔
+                    except Exception as e:
+                        # OBS 断连时截图会失败，静默跳过
+                        if "Connection" in str(e) or "refused" in str(e):
+                            pass
+                        else:
+                            print(f"[Web遥控-截图] {p['name']} 截图异常: {e}")
+        except Exception as e:
+            print(f"[Web遥控-截图] 循环异常: {e}")
+        tick += 1
+        time.sleep(2)  # 基础间隔2秒
 
 def start_screenshot_push():
     global _screenshot_thread, _screenshot_running
