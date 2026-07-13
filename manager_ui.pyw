@@ -1027,7 +1027,14 @@ class MonitorWindow:
     def refresh(self):
         if self._closed:
             return
-        active = [p for p in self.app.active_players if p.get("active") and p["platform"] in ("twitch", "bilibili", "douyin", "custom_web")]
+        # 过滤活跃选手并按名称去重 (防止 active_players 中重复条目导致空白网格位)
+        seen = set()
+        active = []
+        for p in self.app.active_players:
+            if p.get("active") and p["platform"] in ("twitch", "bilibili", "douyin", "custom_web"):
+                if p["name"] not in seen:
+                    seen.add(p["name"])
+                    active.append(p)
         old_names = {p["name"] for p in self.players}
         new_names = {p["name"] for p in active}
         if old_names != new_names:
@@ -1617,6 +1624,22 @@ class MonitorWindow:
                 self.win.after(0, self.win.destroy)
             except:
                 pass
+        else:
+            # 嵌入监视器: 销毁 container 和 empty_label，防止残留 widget 累积
+            # 每次切换页面创建新 MonitorWindow 时，旧 container 不销毁会导致
+            # empty_label 残留，表现为监视器中空白项不断累积
+            try:
+                if self.empty_label:
+                    self.empty_label.destroy()
+                    self.empty_label = None
+            except:
+                pass
+            try:
+                if self.container:
+                    self.container.destroy()
+                    self.container = None
+            except:
+                pass
         log("系统", "[监视器-关闭] 资源清理完成")
 
     def update_if_open(self):
@@ -1819,15 +1842,14 @@ class ManagerApp:
                 "browser_url": p.get("browser_url", ""),
                 "view_label": normalize_view_label(p.get("view_label", 0)),
                 "stream_name": p.get("stream_name", f"player{pid}"),
-                "obs_source_name": p.get("obs_source_name", ""),
+                "obs_source_name": "",  # 启动时清空，避免残留无效源名
                 "active": False,
                 "source_ok": None,
                 "stream_pid": None,
                 "window_title": f"OBS_Window_{p.get('name', '')}"
             }
             self.players.append(player_obj)
-            if player_obj["obs_source_name"]:
-                self.active_players.append(player_obj)
+            # 启动时不自动加入活跃池，避免异常关闭后的残留数据导致卡死
         self.next_id = max_id + 1
         self.reorder_all_view_labels()
         self.save_config()
@@ -2328,9 +2350,17 @@ class ManagerApp:
         """确保嵌入监视器已初始化 (与独立弹出窗口无关)"""
         if not VLC_AVAILABLE:
             return
-        if self.monitor_window and self.monitor_window.embedded:
+        if self.monitor_window and self.monitor_window.embedded and not self.monitor_window._closed:
             self.monitor_window.refresh()
             return
+        # 清理 CTkFrame 内残留的旧子控件 (前一个 MonitorWindow 的 container 等)
+        # 防止切换页面累积残留 widget 导致空白项
+        try:
+            for child in self.monitor_container.winfo_children():
+                if child is not getattr(self, 'monitor_placeholder', None):
+                    child.destroy()
+        except:
+            pass
         # 创建嵌入监视器
         try:
             self.monitor_window = MonitorWindow(self, parent_frame=self.monitor_container)
@@ -2340,7 +2370,7 @@ class ManagerApp:
         if hasattr(self, 'monitor_placeholder'):
             self.monitor_placeholder.place_forget()
         # 延迟刷新，确保容器尺寸已就绪
-        self.root.after(300, lambda: self.monitor_window and self.monitor_window.embedded and self.monitor_window.refresh())
+        self.root.after(300, lambda: self.monitor_window and self.monitor_window.embedded and not self.monitor_window._closed and self.monitor_window.refresh())
 
     # ---------- 辅助获取勾选 ----------
     def get_selected_store_players(self):
@@ -2533,7 +2563,9 @@ class ManagerApp:
                     threading.Thread(target=_stream_process_monitor, args=(player, self.obs), daemon=True).start()
             self.root.after(0, self.refresh_ui)
         threading.Thread(target=do_sync_and_start, daemon=True).start()
-        self.refresh_ui()
+        # 注意: 不在此处同步调用 refresh_ui，因为 refresh_ui 内部调用
+        # self.obs.get_all_source_names() (同步 OBS WebSocket)，当 OBS 正忙于
+        # sync_player 时会冻结 UI。UI 刷新由后台线程完成后的 after 回调处理。
 
     def deactivate_player(self, player):
         if not player.get("active"):
