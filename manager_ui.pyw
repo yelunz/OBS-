@@ -1513,7 +1513,9 @@ class MonitorWindow:
         # 完全清空所有状态 (VLC/管线/截图/网格/paased)
         self._full_cleanup()
         if not self.embedded:
-            self.app.monitor_window = None
+            # 独立弹出窗口关闭时清理 popup_monitor (不影响嵌入监视器)
+            if self.app.popup_monitor is self:
+                self.app.popup_monitor = None
             try:
                 # 使用 after 延迟销毁，避免 CTkToplevel 在协议回调中直接销毁导致的冲突
                 self.win.after(0, self.win.destroy)
@@ -1624,7 +1626,8 @@ class ManagerApp:
         self.current_log_player = tk.StringVar(value="系统")
         self.status_var = tk.StringVar(value="就绪")
         self.original_scene = None
-        self.monitor_window = None
+        self.monitor_window = None       # 嵌入监视器 (主页面内)
+        self.popup_monitor = None        # 独立弹出窗口 (与嵌入监视器完全独立)
         self.pool_label = None
         self._theme_registry = []  # 主题色注册表: (widget, attr, light_value, dark_value)
         self.first_run = not os.path.exists(CONFIG_FILE)
@@ -2217,22 +2220,18 @@ class ManagerApp:
                 self.monitor_placeholder.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
     def _ensure_embedded_monitor(self):
-        """确保嵌入监视器已初始化"""
+        """确保嵌入监视器已初始化 (与独立弹出窗口无关)"""
         if not VLC_AVAILABLE:
             return
         if self.monitor_window and self.monitor_window.embedded:
             self.monitor_window.refresh()
             return
-        # 清理旧的独立监视器
-        if self.monitor_window and not self.monitor_window.embedded:
-            self.monitor_window.on_close()
-            self.monitor_window = None
-        # 创建新的嵌入监视器
+        # 创建嵌入监视器
         self.monitor_window = MonitorWindow(self, parent_frame=self.monitor_container)
         if hasattr(self, 'monitor_placeholder'):
             self.monitor_placeholder.place_forget()
         # 延迟刷新，确保容器尺寸已就绪
-        self.root.after(300, lambda: self.monitor_window and self.monitor_window.refresh())
+        self.root.after(300, lambda: self.monitor_window and self.monitor_window.embedded and self.monitor_window.refresh())
 
     # ---------- 辅助获取勾选 ----------
     def get_selected_store_players(self):
@@ -2595,6 +2594,8 @@ class ManagerApp:
     def _update_monitor(self):
         if self.monitor_window and not self.monitor_window.embedded:
             self.monitor_window.update_if_open()
+        if self.popup_monitor and self.popup_monitor.win.winfo_exists():
+            self.popup_monitor.update_if_open()
 
     # ---------- 其他 UI 方法 ----------
     def add(self):
@@ -2826,6 +2827,9 @@ class ManagerApp:
         if self.monitor_window:
             self.monitor_window.on_close()
             self.monitor_window = None
+        if self.popup_monitor:
+            self.popup_monitor.on_close()
+            self.popup_monitor = None
 
     def start_process(self, player):
         if player["platform"] in ("twitch",) and player.get("active"):
@@ -2857,23 +2861,17 @@ class ManagerApp:
         threading.Thread(target=_reconnect, daemon=True).start()
 
     def toggle_monitor(self):
-        """弹出独立监视器窗口 / 关闭后恢复嵌入监视器"""
-        # 如果已有独立窗口，关闭它并恢复嵌入监视器
-        if self.monitor_window and not self.monitor_window.embedded and self.monitor_window.win.winfo_exists():
-            self.monitor_window.on_close()
-            # 恢复嵌入监视器 (如果当前在监视器页面)
-            self._ensure_embedded_monitor()
+        """弹出/关闭独立监视器窗口 (与嵌入监视器完全独立，互不影响)"""
+        # 如果已有独立弹出窗口，关闭它
+        if self.popup_monitor and self.popup_monitor.win.winfo_exists():
+            self.popup_monitor.on_close()
+            self.popup_monitor = None
             return
-        # 如果嵌入监视器存在，先清理
-        if self.monitor_window and self.monitor_window.embedded:
-            self.monitor_window.on_close()
-            self.monitor_window = None
-            if hasattr(self, 'monitor_placeholder'):
-                self.monitor_placeholder.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
         if not VLC_AVAILABLE:
             messagebox.showwarning("缺少依赖", "监控功能需要 python-vlc 模块。\npip install python-vlc")
             return
-        self.monitor_window = MonitorWindow(self)
+        # 创建独立弹出窗口 (不影响嵌入监视器)
+        self.popup_monitor = MonitorWindow(self)
 
     def _register_frame(self, widget, role="card"):
         """注册 CTkFrame 的主题色"""
@@ -2912,9 +2910,11 @@ class ManagerApp:
                 widget.configure(**{attr: val})
             except Exception:
                 pass
-        # 更新监视器窗口
+        # 更新监视器窗口 (嵌入和独立弹出窗口都更新)
         if self.monitor_window:
             self.monitor_window.apply_theme()
+        if self.popup_monitor:
+            self.popup_monitor.apply_theme()
         self.set_status(f"已切换为{'浅色' if _current_theme == 'light' else '暗色'}模式")
 
     def _copy_web_ip(self):
