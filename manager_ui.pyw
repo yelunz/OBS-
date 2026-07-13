@@ -940,7 +940,6 @@ class MonitorWindow:
         self.container = tk.Frame(self.win, bg=bg_color, highlightthickness=0)
         self.container.pack(fill=tk.BOTH, expand=True)
         self.empty_label = ctk.CTkLabel(self.container, text="暂无推流", font=FONT_TITLE, text_color=TEXT_SECONDARY)
-        self._start_mouse_listener()
         self.win.bind("<Configure>", self._on_resize)
         self.after_id = None
         self._refresh_loop_id = None
@@ -963,31 +962,61 @@ class MonitorWindow:
     def _on_resize(self, event):
         if self._closed:
             return
+        # 仅在窗口尺寸显著变化时触发 refresh，移动窗口位置或微小抖动不触发
+        new_size = (event.width, event.height)
+        if hasattr(self, '_last_size'):
+            dw = abs(new_size[0] - self._last_size[0])
+            dh = abs(new_size[1] - self._last_size[1])
+            if dw < 5 and dh < 5:
+                return
+        self._last_size = new_size
         if self.after_id:
             try:
                 self.win.after_cancel(self.after_id)
             except:
                 pass
-        self.after_id = self.win.after(100, self.refresh)
+        self.after_id = self.win.after(200, self._safe_refresh)
+
+    def _safe_refresh(self):
+        """安全刷新：清除 after_id 后调用 refresh"""
+        self.after_id = None
+        try:
+            self.refresh()
+        except Exception as e:
+            log("系统", f"[监视器-refresh异常] {e}")
 
     def _calculate_layout(self):
         n = len(self.players)
         if n == 0:
             return 1, 100, 100
-        width = self.container.winfo_width() - 20
-        height = self.container.winfo_height() - 20
+        # 使用 win (CTkFrame/CTkToplevel) 的尺寸，而非 container (内部 tk.Frame)
+        # CTkFrame 的尺寸由 grid 管理器控制，winfo 结果更可靠
+        try:
+            self.win.update_idletasks()
+            width = self.win.winfo_width() - 20
+            height = self.win.winfo_height() - 20
+        except Exception:
+            return 0, 0, 0
+        # 容器未就绪时不渲染 (返回 0 触发调用方延迟重试)
         if width < 100 or height < 100:
-            width, height = 960, 600
-        # 平局时优先选更多列 (n=2 时并排而非垂直堆叠)
+            return 0, 0, 0
+        # 选择最接近 16:9 宽高比的布局，同时惩罚空格子
         best_cols = 1
-        best_area = 0
+        best_score = float('inf')
         for cols in range(1, n + 1):
             rows = (n + cols - 1) // cols
             cell_w = width // cols
             cell_h = height // rows
-            area = cell_w * cell_h
-            if area >= best_area:  # 改为 >= : 平局时取更多列
-                best_area = area
+            if cell_w < 80 or cell_h < 60:
+                continue
+            aspect = cell_w / max(cell_h, 1)
+            # 偏差分数：越接近 16:9 (1.78) 越好
+            score = abs(aspect - 1.78)
+            # 惩罚空格子 (避免选择过多列导致大量空位)
+            empty = rows * cols - n
+            score += empty * 0.15
+            if score < best_score:
+                best_score = score
                 best_cols = cols
         cols = best_cols
         rows = (n + cols - 1) // cols
@@ -1001,6 +1030,8 @@ class MonitorWindow:
         active = [p for p in self.app.active_players if p.get("active") and p["platform"] in ("twitch", "bilibili", "douyin", "custom_web")]
         old_names = {p["name"] for p in self.players}
         new_names = {p["name"] for p in active}
+        if old_names != new_names:
+            log("系统", f"[监视器-refresh] 变化: old={old_names}, new={new_names}")
 
         for name in old_names - new_names:
             self._hide_grid(name)
@@ -1100,6 +1131,7 @@ class MonitorWindow:
                 return
             try:
                 self.refresh()
+                self._check_vlc_health()
             except Exception:
                 pass
             if not self._closed:
@@ -1116,10 +1148,73 @@ class MonitorWindow:
                 pass
             self._refresh_loop_id = None
 
+    def _check_vlc_health(self):
+        """检查 VLC 实例健康状态，未播放的重试连接 (解决B站管线重启后VLC不自动重连)"""
+        if not self.vlc_instance:
+            return
+        for name, (inst, mp, canvas) in list(self.vlc_instances.items()):
+            if name not in self.grid_widgets:
+                continue
+            try:
+                if mp.is_playing():
+                    continue
+                # VLC 未在播放，查找选手信息以获取 RTMP URL
+                player = next((p for p in self.app.active_players if p["name"] == name), None)
+                if not player:
+                    continue
+                plat = player["platform"]
+                # 获取 RTMP URL
+                if plat == "twitch":
+                    stream_name = player.get("stream_name", f"player{player['id']}")
+                    rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
+                elif plat == "bilibili":
+                    # B站：检查管线是否在运行 (本实例或其它实例)
+                    pipeline_running = False
+                    if name in self.bilibili_procs:
+                        p1, _ = self.bilibili_procs[name]
+                        pipeline_running = p1.poll() is None
+                    elif hasattr(self.app, '_bilibili_pipelines') and name in self.app._bilibili_pipelines:
+                        owner = self.app._bilibili_pipelines[name]
+                        if owner is not self and hasattr(owner, 'bilibili_procs') and name in owner.bilibili_procs:
+                            p1, _ = owner.bilibili_procs[name]
+                            pipeline_running = p1.poll() is None
+                    if not pipeline_running:
+                        continue  # 管线未运行，暂不重试 VLC
+                    stream_name = player.get("stream_name", f"player{player['id']}")
+                    rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
+                else:
+                    continue
+                # 重试 VLC 连接
+                log("系统", f"[监视器-VLC健康检查] {name} 未播放，重试: {rtmp_url}")
+                mp.stop()
+                media = self.vlc_instance.media_new(rtmp_url)
+                media.add_option(":network-caching=1000")
+                media.add_option(":no-audio")
+                mp.set_media(media)
+                if canvas.winfo_exists():
+                    mp.set_hwnd(canvas.winfo_id())
+                mp.play()
+            except Exception as e:
+                log("系统", f"[监视器-VLC健康检查] {name} 异常: {e}")
+
     def _reposition_cells(self):
         if not self.players:
             return
         cols, cell_w, cell_h = self._calculate_layout()
+        # 容器未就绪 (cols=0)：隐藏所有网格，安排延迟重试
+        if cols == 0:
+            for name in list(self.grid_widgets.keys()):
+                frame, _, _ = self.grid_widgets[name]
+                try:
+                    frame.place_forget()
+                except:
+                    pass
+            if not self._closed:
+                try:
+                    self.win.after(300, self._safe_refresh)
+                except:
+                    pass
+            return
         self.columns = cols
         self.cell_width = cell_w
         self.cell_height = cell_h
@@ -1137,13 +1232,6 @@ class MonitorWindow:
             label_height = 25
             canvas.place(x=0, y=0, width=cell_w, height=cell_h - label_height)
             label.place(x=0, y=cell_h - label_height, width=cell_w, height=label_height)
-
-        # 容器未就绪时 (winfo_width 返回 1)，安排一次延迟重试
-        if self.container.winfo_width() <= 1 and not self._closed:
-            try:
-                self.win.after(500, self.refresh)
-            except:
-                pass
 
     def _show_grid(self, player):
         name = player["name"]
@@ -1167,6 +1255,8 @@ class MonitorWindow:
         frame.place(x=0, y=0, width=100, height=100)
         canvas.place(x=0, y=0, width=100, height=75)
         name_label.place(x=0, y=75, width=100, height=25)
+        # 原生点击绑定：点击 canvas 切换视角 (替代 pynput 全局监听器)
+        canvas.bind("<Button-1>", lambda e, p=player: self.app.switch_to(p))
         self.grid_widgets[name] = (frame, canvas, name_label)
         log("系统", f"[监视器-显示-步骤2] 创建网格: {name}")
 
@@ -1295,6 +1385,25 @@ class MonitorWindow:
             log("系统", f"[监视器-B站-失败] {name} 没有 browser_url")
             return
 
+        # 全局协调：检查是否已有其他 MonitorWindow 实例启动了同一选手的 B站管线
+        # 避免两个实例推送到相同 RTMP URL 导致 MediaMTX 冲突
+        if hasattr(self.app, '_bilibili_pipelines'):
+            with self.app._bilibili_lock:
+                if name in self.app._bilibili_pipelines:
+                    owner = self.app._bilibili_pipelines[name]
+                    if owner is not self and hasattr(owner, 'bilibili_procs') and name in owner.bilibili_procs:
+                        p1, p2 = owner.bilibili_procs[name]
+                        if p1.poll() is None:
+                            log("系统", f"[监视器-B站-跳过] {name} 管线已由其他实例运行，本实例仅启动 VLC")
+                            stream_name = player.get("stream_name", f"player{player['id']}")
+                            rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
+                            self.win.after(1000, self._start_vlc, name, canvas, rtmp_url)
+                            self.win.after(5000, self._retry_vlc, name, canvas, rtmp_url)
+                            return
+                # 注册本实例为管线拥有者
+                self.app._bilibili_pipelines[name] = self
+                log("系统", f"[监视器-B站-注册] {name} 管线由本实例管理")
+
         stream_name = player.get("stream_name", f"player{player['id']}")
         rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
         log("系统", f"[监视器-B站-步骤2] URL={url}, RTMP={rtmp_url}")
@@ -1337,6 +1446,12 @@ class MonitorWindow:
                 except:
                     pass
             log("系统", f"[监视器-B站-停止] 管线已终止: {name}")
+        # 注销全局注册，允许其他实例重新启动管线
+        if hasattr(self.app, '_bilibili_pipelines'):
+            with self.app._bilibili_lock:
+                if self.app._bilibili_pipelines.get(name) is self:
+                    self.app._bilibili_pipelines.pop(name, None)
+                    log("系统", f"[监视器-B站-注销] {name} 管线已注销全局注册")
 
     # ==================== 截图监视器 (抖音/自定义网页) ====================
     def _start_screenshot_monitor(self, name, canvas):
@@ -1454,41 +1569,25 @@ class MonitorWindow:
     def refresh_all(self):
         """刷新所有视角：在子线程清理 VLC/管线/截图，避免阻塞主线程"""
         log("系统", "[监视器-刷新所有] 开始 (子线程清理)")
+        # 立即隐藏所有网格，避免清理过程中残留画面闪烁
+        for name in list(self.grid_widgets.keys()):
+            frame, _, _ = self.grid_widgets[name]
+            try:
+                frame.place_forget()
+            except:
+                pass
         def _do_cleanup():
             try:
                 self._full_cleanup()
             except Exception as e:
                 log("系统", f"[监视器-刷新所有] 清理异常: {e}")
-            # 回到主线程重建网格
+            # 回到主线程重建网格 (使用 _safe_refresh 避免异常)
             try:
-                self.win.after(0, self.refresh)
+                self.win.after(0, self._safe_refresh)
                 log("系统", "[监视器-刷新所有] 清理完成，已触发重建")
             except:
                 pass
         threading.Thread(target=_do_cleanup, daemon=True).start()
-
-    def _start_mouse_listener(self):
-        def on_click(x, y, button, pressed):
-            if not pressed or button != mouse.Button.left:
-                return True
-            if not self.win.winfo_exists():
-                return True
-            rel_x = x - self.container.winfo_rootx()
-            rel_y = y - self.container.winfo_rooty()
-            cols = self.columns
-            if cols <= 0:
-                return True
-            for idx, player in enumerate(self.players):
-                row = idx // cols
-                col = idx % cols
-                x0 = 10 + col * self.cell_width
-                y0 = 10 + row * self.cell_height
-                if x0 <= rel_x <= x0 + self.cell_width and y0 <= rel_y <= y0 + self.cell_height:
-                    self.app.root.after(0, self.app.switch_to, player)
-                    break
-            return True
-        self.mouse_listener = mouse.Listener(on_click=on_click)
-        self.mouse_listener.start()
 
     def on_close(self):
         log("系统", "[监视器-关闭] 开始清理资源")
@@ -1498,9 +1597,6 @@ class MonitorWindow:
             self.win.unbind("<Configure>")
         except:
             pass
-        if self.mouse_listener:
-            self.mouse_listener.stop()
-            self.mouse_listener = None
         # 停止周期性刷新循环
         self._stop_refresh_loop()
         # 停止截图渲染循环
@@ -1524,8 +1620,13 @@ class MonitorWindow:
         log("系统", "[监视器-关闭] 资源清理完成")
 
     def update_if_open(self):
-        if self.win and self.win.winfo_exists():
-            self.refresh()
+        if self._closed:
+            return
+        try:
+            if self.win and self.win.winfo_exists():
+                self.refresh()
+        except Exception:
+            pass
 
 # ==================== 带复选框的 Treeview ====================
 class CheckboxTreeview(ttk.Treeview):
@@ -1628,6 +1729,10 @@ class ManagerApp:
         self.original_scene = None
         self.monitor_window = None       # 嵌入监视器 (主页面内)
         self.popup_monitor = None        # 独立弹出窗口 (与嵌入监视器完全独立)
+        self._bilibili_pipelines = {}    # 全局 B站管线协调: name -> MonitorWindow 实例
+        self._bilibili_lock = threading.Lock()
+        self._pending_commands = []      # 跨线程命令队列 (Flask→主线程)
+        self._command_lock = threading.Lock()
         self.pool_label = None
         self._theme_registry = []  # 主题色注册表: (widget, attr, light_value, dark_value)
         self.first_run = not os.path.exists(CONFIG_FILE)
@@ -2208,7 +2313,7 @@ class ManagerApp:
                 btn.configure(fg_color=ACCENT, text_color="#FFFFFF")
             else:
                 btn.configure(fg_color="transparent", text_color=TEXT_SECONDARY)
-        
+
         # 切换到监视器页面时，初始化嵌入监视器
         if name == "monitor":
             self._ensure_embedded_monitor()
@@ -2227,7 +2332,11 @@ class ManagerApp:
             self.monitor_window.refresh()
             return
         # 创建嵌入监视器
-        self.monitor_window = MonitorWindow(self, parent_frame=self.monitor_container)
+        try:
+            self.monitor_window = MonitorWindow(self, parent_frame=self.monitor_container)
+        except Exception as e:
+            log("系统", f"[_ensure_embedded_monitor] 创建异常: {e}")
+            return
         if hasattr(self, 'monitor_placeholder'):
             self.monitor_placeholder.place_forget()
         # 延迟刷新，确保容器尺寸已就绪
@@ -2592,7 +2701,7 @@ class ManagerApp:
         self._update_monitor()
 
     def _update_monitor(self):
-        if self.monitor_window and not self.monitor_window.embedded:
+        if self.monitor_window and not self.monitor_window._closed:
             self.monitor_window.update_if_open()
         if self.popup_monitor and self.popup_monitor.win.winfo_exists():
             self.popup_monitor.update_if_open()
@@ -2730,9 +2839,26 @@ class ManagerApp:
         threading.Thread(target=monitor, daemon=True).start()
 
     def refresh_loop(self):
+        self._process_pending_commands()
         if self.obs and self.obs.connected:
             self.refresh_ui()
         self.root.after(2000, self.refresh_loop)
+
+    def _process_pending_commands(self):
+        """处理来自其他线程 (如 Flask) 的待执行命令"""
+        with self._command_lock:
+            commands = list(self._pending_commands)
+            self._pending_commands.clear()
+        for cmd in commands:
+            try:
+                cmd()
+            except Exception as e:
+                log("系统", f"[命令队列] 执行异常: {e}")
+
+    def submit_command(self, cmd):
+        """从任意线程提交一个命令到主线程执行 (线程安全)"""
+        with self._command_lock:
+            self._pending_commands.append(cmd)
 
     def _start_obs_watchdog(self):
         """OBS 连接看门狗：每10秒检测，断线后自动重连"""
