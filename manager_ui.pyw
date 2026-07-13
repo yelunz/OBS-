@@ -913,6 +913,7 @@ class MonitorWindow:
         self.cell_width = 300
         self.cell_height = 200
         self.empty_label = None
+        self._closed = False  # 防止关闭后旧回调创建新网格
 
         # B站监视器管线 (streamlink + ffmpeg → RTMP)
         self.bilibili_procs = {}      # name -> (p1, p2) subprocess
@@ -934,7 +935,9 @@ class MonitorWindow:
             toolbar.pack(fill=tk.X, side=tk.TOP, pady=2)
             ctk.CTkButton(toolbar, text="刷新所有", command=self.refresh_all, corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side=tk.LEFT, padx=5)
 
-        self.container = ttk.Frame(self.win)
+        # 使用 tk.Frame 替代 ttk.Frame，显式设置背景色以匹配主题 (修复白底板)
+        bg_color = DARK_THEME["CARD_BG"] if _current_theme == "dark" else LIGHT_THEME["CARD_BG"]
+        self.container = tk.Frame(self.win, bg=bg_color, highlightthickness=0)
         self.container.pack(fill=tk.BOTH, expand=True)
         self.empty_label = ctk.CTkLabel(self.container, text="暂无推流", font=FONT_TITLE, text_color=TEXT_SECONDARY)
         self._start_mouse_listener()
@@ -942,6 +945,8 @@ class MonitorWindow:
         self.after_id = None
         self._refresh_loop_id = None
         self._tk_widgets = []  # 需要主题更新的 tk 原生控件
+        # 注册 container 到主题系统
+        self._tk_widgets.append((self.container, "bg", LIGHT_THEME["CARD_BG"], DARK_THEME["CARD_BG"]))
         self.refresh()
         # 启动周期性刷新循环：每3秒检测新增/消失的活跃选手
         self._start_refresh_loop()
@@ -956,8 +961,13 @@ class MonitorWindow:
                 pass
 
     def _on_resize(self, event):
+        if self._closed:
+            return
         if self.after_id:
-            self.win.after_cancel(self.after_id)
+            try:
+                self.win.after_cancel(self.after_id)
+            except:
+                pass
         self.after_id = self.win.after(100, self.refresh)
 
     def _calculate_layout(self):
@@ -985,6 +995,8 @@ class MonitorWindow:
         return cols, cell_w, cell_h
 
     def refresh(self):
+        if self._closed:
+            return
         active = [p for p in self.app.active_players if p.get("active") and p["platform"] in ("twitch", "bilibili", "douyin", "custom_web")]
         old_names = {p["name"] for p in self.players}
         new_names = {p["name"] for p in active}
@@ -1056,14 +1068,17 @@ class MonitorWindow:
         """周期性刷新：检测新增/消失的活跃选手并自动渲染"""
         self._stop_refresh_loop()
         def _loop():
-            if not self.win or not self.win.winfo_exists():
+            if self._closed or not self.win or not self.win.winfo_exists():
                 self._refresh_loop_id = None
                 return
             try:
                 self.refresh()
             except Exception:
                 pass
-            self._refresh_loop_id = self.win.after(3000, _loop)
+            if not self._closed:
+                self._refresh_loop_id = self.win.after(3000, _loop)
+            else:
+                self._refresh_loop_id = None
         self._refresh_loop_id = self.win.after(3000, _loop)
 
     def _stop_refresh_loop(self):
@@ -1105,13 +1120,16 @@ class MonitorWindow:
         if name in self.grid_widgets:
             return
 
-        frame = ttk.Frame(self.container, borderwidth=1, relief=tk.SUNKEN)
-        canvas = tk.Canvas(frame, bg=PAGE_BG)
-        name_label = tk.Label(frame, text=name, bg=ELEVATED_BG, fg=TEXT_PRIMARY, font=FONT_SMALL)
+        # 使用 tk.Frame 替代 ttk.Frame，消除白边框
+        frame = tk.Frame(self.container, bg=BORDER, highlightthickness=1, highlightbackground=BORDER)
+        canvas = tk.Canvas(frame, bg=PAGE_BG, highlightthickness=0)
+        name_label = tk.Label(frame, text=name, bg=ELEVATED_BG, fg=TEXT_PRIMARY, font=FONT_SMALL, highlightthickness=0)
         # 注册 tk 控件主题更新
         self._tk_widgets.append((canvas, "bg", LIGHT_THEME["PAGE_BG"], DARK_THEME["PAGE_BG"]))
         self._tk_widgets.append((name_label, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
         self._tk_widgets.append((name_label, "fg", LIGHT_THEME["TEXT_PRIMARY"], DARK_THEME["TEXT_PRIMARY"]))
+        self._tk_widgets.append((frame, "bg", LIGHT_THEME["BORDER"], DARK_THEME["BORDER"]))
+        self._tk_widgets.append((frame, "highlightbackground", LIGHT_THEME["BORDER"], DARK_THEME["BORDER"]))
         frame.place(x=0, y=0, width=100, height=100)
         canvas.place(x=0, y=0, width=100, height=75)
         name_label.place(x=0, y=75, width=100, height=25)
@@ -1440,6 +1458,12 @@ class MonitorWindow:
 
     def on_close(self):
         log("系统", "[监视器-关闭] 开始清理资源")
+        self._closed = True  # 标记已关闭，阻止旧回调创建新网格
+        # 解绑 <Configure> 事件，防止窗口缩放触发旧 MonitorWindow 的 refresh
+        try:
+            self.win.unbind("<Configure>")
+        except:
+            pass
         if self.mouse_listener:
             self.mouse_listener.stop()
             self.mouse_listener = None
@@ -2070,9 +2094,9 @@ class ManagerApp:
         return page
 
     def _refresh_embedded_monitor(self):
-        """刷新嵌入的监视器"""
+        """刷新嵌入的监视器 (与独立窗口的刷新所有一致)"""
         if self.monitor_window and self.monitor_window.embedded:
-            self.monitor_window.refresh()
+            self.monitor_window.refresh_all()
 
     # ==================== Logs Page ====================
     def _create_logs_page(self):
@@ -2795,10 +2819,12 @@ class ManagerApp:
         threading.Thread(target=_reconnect, daemon=True).start()
 
     def toggle_monitor(self):
-        """弹出独立监视器窗口"""
-        # 如果已有独立窗口，关闭它
+        """弹出独立监视器窗口 / 关闭后恢复嵌入监视器"""
+        # 如果已有独立窗口，关闭它并恢复嵌入监视器
         if self.monitor_window and not self.monitor_window.embedded and self.monitor_window.win.winfo_exists():
             self.monitor_window.on_close()
+            # 恢复嵌入监视器 (如果当前在监视器页面)
+            self._ensure_embedded_monitor()
             return
         # 如果嵌入监视器存在，先清理
         if self.monitor_window and self.monitor_window.embedded:
