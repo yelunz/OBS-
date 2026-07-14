@@ -1908,7 +1908,7 @@ class ManagerApp:
         global app
         app = self
         self.root = root
-        self.root.title("多视角切换管理器 Pro")
+        self.root.title("OBS多视角切换器")
         self.players = []
         self.active_players = []
         self.next_id = 1
