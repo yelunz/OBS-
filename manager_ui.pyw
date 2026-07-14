@@ -377,16 +377,17 @@ class OBSController:
         except Exception as e:
             log("系统", f"[创建浏览器源-步骤2-失败] 浏览器源创建失败: {name} - {e}")
 
-    def refresh_browser_source(self, name, url):
-        """刷新浏览器源: 重新设置 URL 触发页面重载"""
+    def refresh_browser_source(self, name, url=None):
+        """刷新浏览器源: 按下浏览器源自带的"刷新"按钮
+        只刷新页面内容, 不重置音频路由和静音状态
+        (SetInputSettings会重置音频路由导致混音器控制消失+不静音, 改用PressInputPropertiesButton)
+        """
         try:
-            settings = {"url": url}
-            self.ws.call(requests.SetInputSettings(
+            self.ws.call(requests.PressInputPropertiesButton(
                 inputName=name,
-                inputSettings=settings,
-                overlay=False
+                propertyName="refresh"
             ))
-            log("系统", f"[刷新浏览器源-完成] {name} URL={url}")
+            log("系统", f"[刷新浏览器源-完成] {name} (PressInputPropertiesButton:refresh)")
         except Exception as e:
             log("系统", f"[刷新浏览器源-失败] {name}: {e}")
 
@@ -486,6 +487,20 @@ class OBSController:
     def set_mute(self, source_name, mute):
         try:
             self.ws.call(requests.SetInputMute(inputName=source_name, inputMuted=mute))
+        except:
+            pass
+
+    def set_monitor_type(self, source_name, monitor_type):
+        """设置音频监听类型
+        OBS_MONITORING_TYPE_NONE: 不监听不输出 (源仍显示在混音器但无音频活动)
+        OBS_MONITORING_TYPE_MONITOR_ONLY: 只监听(耳机)
+        OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT: 监听并输出
+        """
+        try:
+            self.ws.call(requests.SetInputAudioMonitorType(
+                inputName=source_name,
+                monitorType=monitor_type
+            ))
         except:
             pass
 
@@ -2605,9 +2620,9 @@ class ManagerApp:
 
     def _switch_thread(self, player):
         """后台线程执行 OBS 切换:
-        - VLC 源(Twitch): 隐藏 + 静音
-        - 浏览器源(B站/抖音): 保持可见用于截图 + 静音
-        - 当前源: 显示 + 取消静音 + 触发播放(仅VLC)
+        - VLC 源(Twitch): 隐藏 + 静音 + monitorType=none
+        - 浏览器源(B站/抖音): 保持可见用于截图 + 静音 + monitorType=none
+        - 当前源: 显示 + 取消静音 + monitorType=monitor_and_output + 置顶
         """
         try:
             src_name = player.get("obs_source_name")
@@ -2621,12 +2636,13 @@ class ManagerApp:
             with self.data_lock:
                 active_snapshot = list(self.active_players)
 
-            # 1. 处理所有其他源
+            # 1. 处理所有其他源: 静音 + 不监听不输出 (减少混音器干扰)
             for p in active_snapshot:
                 p_src = p.get("obs_source_name")
                 if not p_src or p_src == src_name or p_src not in item_map:
                     continue
-                self.obs.set_mute(p_src, True)  # 全部静音
+                self.obs.set_mute(p_src, True)
+                self.obs.set_monitor_type(p_src, "OBS_MONITORING_TYPE_NONE")
                 # VLC 源(Twitch)隐藏; 浏览器源(B站/抖音)保持可见用于截图
                 if p.get("platform") == "twitch":
                     self.obs.set_visibility(p_src, False)
@@ -2634,8 +2650,10 @@ class ManagerApp:
             # 2. 显示并取消静音当前源
             self.obs.set_visibility(src_name, True)
             self.obs.set_mute(src_name, False)
+            # 当前源: 监听并输出 (在混音器中显示完整控制)
+            self.obs.set_monitor_type(src_name, "OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT")
 
-            # 3. 将当前源置顶 (覆盖其他可见的浏览器源, 解决OBS从上到下渲染覆盖问题)
+            # 3. 将当前源置顶 (覆盖其他可见的浏览器源)
             self.obs.bring_to_front(src_name)
 
             # 4. 主动触发播放 (仅 VLC 源需要, 浏览器源不需要)
@@ -2684,22 +2702,12 @@ class ManagerApp:
                             except Exception as e:
                                 log("系统", f"[刷新-监视器VLC异常] {name}: {e}")
                 else:
-                    # B站/抖音: 刷新浏览器源 (重新设置 URL 触发页面重载)
+                    # B站/抖音: 刷新浏览器源 (PressInputPropertiesButton:refresh)
+                    # 只刷新页面内容, 不重置音频路由和静音状态
                     src_name = player.get("obs_source_name")
-                    url = player.get("url", "")
-                    if src_name and url and self.obs and self.obs.connected:
-                        self.obs.refresh_browser_source(src_name, url)
-                        # 浏览器源重载后音频状态会重置, 需要重新设置静音
-                        # 当前视角取消静音, 非当前视角静音
-                        cur_name = self.get_current_display_name()
-                        time.sleep(1)  # 等待浏览器源重载完成
-                        if name == cur_name:
-                            self.obs.set_mute(src_name, False)
-                            # 刷新后可能层级变化, 重新置顶
-                            self.obs.bring_to_front(src_name)
-                        else:
-                            self.obs.set_mute(src_name, True)
-                        log("系统", f"[刷新-浏览器源] {name} 重新加载: {url}, 静音={name != cur_name}")
+                    if src_name and self.obs and self.obs.connected:
+                        self.obs.refresh_browser_source(src_name)
+                        log("系统", f"[刷新-浏览器源] {name} 刷新页面内容")
                 log("系统", f"[刷新-完成] {name}")
                 self.root.after(0, self.refresh_ui)
             except Exception as e:
