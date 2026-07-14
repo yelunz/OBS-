@@ -795,9 +795,9 @@ class PlayerDialog:
         self.qual_var = tk.StringVar(value=current_player.get("quality", "best") if current_player else "best")
         self.url_var = tk.StringVar(value=browser_url)
         ctk.CTkLabel(self.top, text="显示名称:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-        ctk.CTkEntry(self.top, textvariable=self.name_var, width=20).grid(row=0, column=1, padx=5, pady=5)
+        ctk.CTkEntry(self.top, textvariable=self.name_var, width=240).grid(row=0, column=1, padx=5, pady=5)
         ctk.CTkLabel(self.top, text="快捷键 (单字符):").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
-        ctk.CTkEntry(self.top, textvariable=self.hotkey_var, width=10).grid(row=1, column=1, padx=5, pady=5)
+        ctk.CTkEntry(self.top, textvariable=self.hotkey_var, width=60).grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
         ctk.CTkLabel(self.top, text="平台:").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
         combo = ctk.CTkComboBox(self.top, variable=self.plat_var, values=["bilibili", "twitch", "douyin", "custom_web"], state="readonly")
         combo.grid(row=2, column=1, padx=5, pady=5, sticky=tk.W)
@@ -815,15 +815,15 @@ class PlayerDialog:
         p = self.plat_var.get()
         if p in ("bilibili", "custom_web"):
             ctk.CTkLabel(self.frame, text="房间号 (选填):").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-            ctk.CTkEntry(self.frame, textvariable=self.room_var, width=20).grid(row=0, column=1, padx=5, pady=5)
+            ctk.CTkEntry(self.frame, textvariable=self.room_var, width=240).grid(row=0, column=1, padx=5, pady=5)
             ctk.CTkLabel(self.frame, text="完整URL:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
-            ctk.CTkEntry(self.frame, textvariable=self.url_var, width=50).grid(row=1, column=1, padx=5, pady=5)
+            ctk.CTkEntry(self.frame, textvariable=self.url_var, width=400).grid(row=1, column=1, padx=5, pady=5)
         elif p == "twitch":
             ctk.CTkLabel(self.frame, text="频道名或完整URL:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-            ctk.CTkEntry(self.frame, textvariable=self.twitch_var, width=50).grid(row=0, column=1, padx=5, pady=5)
+            ctk.CTkEntry(self.frame, textvariable=self.twitch_var, width=400).grid(row=0, column=1, padx=5, pady=5)
         elif p == "douyin":
             ctk.CTkLabel(self.frame, text="直播间URL:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-            ctk.CTkEntry(self.frame, textvariable=self.douyin_var, width=50).grid(row=0, column=1, padx=5, pady=5)
+            ctk.CTkEntry(self.frame, textvariable=self.douyin_var, width=400).grid(row=0, column=1, padx=5, pady=5)
 
     def ok(self):
         hotkey = self.hotkey_var.get().strip()
@@ -861,13 +861,13 @@ class OBSLoginDialog:
         ctk.CTkLabel(self.top, text="请填写 OBS WebSocket 服务器信息：", font=FONT_BODY).grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 5))
         ctk.CTkLabel(self.top, text="主机:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
         self.host_var = tk.StringVar(value=host)
-        ctk.CTkEntry(self.top, textvariable=self.host_var, width=20).grid(row=1, column=1, padx=5, pady=5)
+        ctk.CTkEntry(self.top, textvariable=self.host_var, width=240).grid(row=1, column=1, padx=5, pady=5)
         ctk.CTkLabel(self.top, text="端口:").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
         self.port_var = tk.IntVar(value=port)
-        ctk.CTkEntry(self.top, textvariable=self.port_var, width=20).grid(row=2, column=1, padx=5, pady=5)
+        ctk.CTkEntry(self.top, textvariable=self.port_var, width=240).grid(row=2, column=1, padx=5, pady=5)
         ctk.CTkLabel(self.top, text="密码:").grid(row=3, column=0, padx=5, pady=5, sticky=tk.W)
         self.pwd_var = tk.StringVar(value=password)
-        ctk.CTkEntry(self.top, textvariable=self.pwd_var, width=20, show="*").grid(row=3, column=1, padx=5, pady=5)
+        ctk.CTkEntry(self.top, textvariable=self.pwd_var, width=240, show="*").grid(row=3, column=1, padx=5, pady=5)
         btn_frame = ctk.CTkFrame(self.top, fg_color="transparent")
         btn_frame.grid(row=4, column=0, columnspan=2, pady=15)
         ctk.CTkButton(btn_frame, text="连接", command=self.ok).pack(side=tk.LEFT, padx=10)
@@ -2382,10 +2382,18 @@ class ManagerApp:
         if not selected:
             messagebox.showinfo("提示", "请先在仓库中勾选选手")
             return
+        added = 0
         for player in selected:
+            with self.data_lock:
+                in_pool = player in self.active_players
+                full = len(self.active_players) >= self.max_streams
+            if full and not in_pool:
+                messagebox.showwarning("限制", f"活跃池已满 (最多{self.max_streams}个)，已添加 {added} 个")
+                break
             self.move_to_active(player)
+            added += 1
         self.store_tree.clear_checked()
-        self.set_status(f"已添加 {len(selected)} 个选手到活跃池")
+        self.set_status(f"已添加 {added} 个选手到活跃池")
 
     def refresh_store_tree(self):
         checked_names = self.store_tree.get_checked_names()
@@ -2406,21 +2414,25 @@ class ManagerApp:
             return
         with self.data_lock:
             if player in self.active_players:
-                # 已在活跃池：若未激活则启动推流
-                if not player.get("active"):
-                    self.activate_player(player)
-                return
-            # 检查活跃池名额
-            active_count = sum(1 for p in self.active_players if p.get("active"))
-            if active_count >= self.max_streams:
-                messagebox.showwarning("限制", f"活跃池已满 (最多{self.max_streams}个)")
-                return
-            self.active_players.append(player)
+                already_in_pool = True
+            else:
+                already_in_pool = False
+                # 检查活跃池总数 (包括未激活的)，防止超过 max_streams
+                if len(self.active_players) >= self.max_streams:
+                    messagebox.showwarning("限制", f"活跃池已满 (最多{self.max_streams}个)")
+                    return
+                self.active_players.append(player)
+        if already_in_pool:
+            # 已在活跃池：若未激活则启动推流
+            if not player.get("active"):
+                self.activate_player(player)
+            return
         self.save_config()
         self._update_log_combo()
         # activate_player 会设置 active=True、创建 OBS 源、启动推流管线
         self.activate_player(player)
-        self.refresh_ui()
+        # 注意: 不在此处同步调用 refresh_ui，因 OBS 正忙于 sync_player，
+        # 同步调用会冻结 UI; UI 刷新由 activate_player 后台线程完成后处理
 
     def move_to_store(self, player):
         if not self.obs or not self.obs.connected:
@@ -2710,7 +2722,12 @@ class ManagerApp:
             self._update_log_combo()
             return
 
-        existing = self.obs.get_all_source_names()
+        # get_all_source_names 是同步 WebSocket 调用，OBS 忙碌时可能阻塞
+        # 添加异常保护，失败时跳过清理逻辑避免冻结 UI
+        try:
+            existing = self.obs.get_all_source_names()
+        except Exception:
+            existing = []
         cur_name = self.get_current_display_name()
         self.cur_label.configure(text=cur_name or "无")
         if hasattr(self, '_stat_values') and "当前视角" in self._stat_values:
@@ -2861,12 +2878,18 @@ class ManagerApp:
             while True:
                 try:
                     if self.auto_detect.get():
+                        # 先快照再释放锁，避免网络请求阻塞其他需要 data_lock 的操作
                         with self.data_lock:
                             snapshot = [p for p in self.active_players if p["platform"] in ("twitch",) and not p["active"]]
                         for p in snapshot:
-                            check_source(p)
+                            try:
+                                check_source(p)
+                            except Exception:
+                                pass  # 单个选手检查失败不影响循环
                 except RuntimeError:
                     pass  # 非主线程调用 tkinter 变量时忽略
+                except Exception:
+                    pass
                 time.sleep(AUTO_DETECT_INTERVAL)
         threading.Thread(target=monitor, daemon=True).start()
 
@@ -2874,7 +2897,7 @@ class ManagerApp:
         self._process_pending_commands()
         if self.obs and self.obs.connected:
             self.refresh_ui()
-        self.root.after(2000, self.refresh_loop)
+        self.root.after(3000, self.refresh_loop)
 
     def _process_pending_commands(self):
         """处理来自其他线程 (如 Flask) 的待执行命令"""
@@ -3322,13 +3345,20 @@ class ManagerApp:
         ctk.CTkButton(btn_frame, text="关闭", command=top.destroy).pack(side=tk.LEFT, padx=10)
 
     def save_config(self):
+        # 保存时剥离运行时状态字段，确保每次启动均为全新状态
+        # 避免异常关闭后残留 active/obs_source_name 等导致卡死
+        players_clean = []
+        for p in self.players:
+            pc = {k: v for k, v in p.items() if k not in ("active", "source_ok", "stream_pid")}
+            pc["obs_source_name"] = ""  # 源名由 sync_player 在运行时重建
+            players_clean.append(pc)
         cfg = {
             "obs_host": self.obs_host,
             "obs_port": self.obs_port,
             "obs_password": self.obs_pwd,
             "max_active_streams": self.max_streams,
             "hotkey_modifiers": self.hotkey_modifiers,
-            "players": self.players,
+            "players": players_clean,
             "scene_name": DEDICATED_SCENE
         }
         with open(CONFIG_FILE + ".tmp", "w", encoding="utf-8") as f:
