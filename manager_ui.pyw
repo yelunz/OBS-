@@ -2749,43 +2749,33 @@ class ManagerApp:
         threading.Thread(target=self._switch_thread, args=(player,), daemon=True).start()
 
     def _switch_thread(self, player):
-        """后台线程执行 OBS 切换: WebSocket 调用不阻塞 UI
-        关键: B站/抖音浏览器源不隐藏 (避免截图黑屏), 只调整层级让当前源覆盖在上层"""
+        """后台线程执行 OBS 切换: 恢复传统开关逻辑，所有非当前源隐藏并静音"""
         try:
             src_name = player.get("obs_source_name")
             if not src_name:
                 return
-            # 一次获取所有场景项 (避免循环中重复调用 get_scene_item_map)
             item_map = self.obs.get_scene_item_map()
             if src_name not in item_map:
                 log("系统", f"[切换-失败] 源不在场景中: {src_name}")
                 return
-            # 如果当前已显示此源, 跳过
-            if item_map.get(src_name, {}).get("enabled", False):
-                # 仍需检查是否其他源叠加在上层
-                pass
 
             with self.data_lock:
                 active_snapshot = list(self.active_players)
 
-            # 1. 静音并处理其他源
+            # 1. 隐藏并静音所有其他源 (恢复传统逻辑, 不再保留浏览器源可见)
             for p in active_snapshot:
                 p_src = p.get("obs_source_name")
                 if not p_src or p_src == src_name or p_src not in item_map:
                     continue
                 self.obs.set_mute(p_src, True)
-                if p["platform"] == "twitch":
-                    # Twitch VLC源: 隐藏 (监视器用VLC嵌入, 不依赖截图)
-                    self.obs.set_visibility(p_src, False)
-                # B站/抖音/自定义网页: 不隐藏! 保持渲染供截图, 通过层级覆盖
+                self.obs.set_visibility(p_src, False)
 
             # 2. 显示并取消静音当前源
             self.obs.set_visibility(src_name, True)
             self.obs.set_mute(src_name, False)
 
-            # 3. 把当前源提到最上层 (覆盖其他未隐藏的浏览器源, 解决OBS叠加问题)
-            max_index = len(item_map)
-            self.obs.set_source_index(src_name, max_index)
+            # 3. 主动触发播放 (解决 always_play 不生效)
+            self.obs.trigger_media_play(src_name)
 
             log("系统", f"[切换-完成] 视角至 {player['name']}")
             self.current_log_player.set(player["name"])
