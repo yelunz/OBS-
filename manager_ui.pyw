@@ -2823,46 +2823,23 @@ class ManagerApp:
     def sync_player(self, player):
         if not self.obs or not self.obs.connected:
             return
-        plat = player["platform"]
-
-        # ---------- Twitch: 保持 VLC 源 (RTMP 推流) ----------
-        if plat == "twitch":
-            desired = f"{player['name']}_{player['view_label']}_{player['hotkey']}"
-            old = player.get("obs_source_name")
-            if old and self.obs.source_exists(old):
-                if old != desired:
-                    if self.obs.source_exists(desired):
-                        self.obs.remove_source(desired)
-                    if not self.obs.rename_source(old, desired):
-                        self.obs.remove_source(old)
-                        self.obs.create_vlc(desired, f"rtmp://localhost:1935/live/{player['stream_name']}")
-            elif not self.obs.source_exists(desired):
-                self.obs.create_vlc(desired, f"rtmp://localhost:1935/live/{player['stream_name']}")
-            player["obs_source_name"] = desired
-            log("系统", f"sync_player 完成: {player['name']} -> {desired} (推流)")
-
-        # ---------- B站 / 抖音 / 自定义网页: 统一使用 Browser Source ----------
-        elif plat in ("bilibili", "douyin", "custom_web"):
-            desired = f"{player['name']}_{player['view_label']}_{player['hotkey']}"
-            # 获取浏览器 URL: 优先用 browser_url, 兜底用 douyin_url
-            url = player.get("browser_url", "") or player.get("douyin_url", "")
-            if not url:
-                log("系统", f"[sync_player-失败] 选手 {player['name']} 没有 browser_url，无法创建浏览器源")
-                return
-            old = player.get("obs_source_name")
-            log("系统", f"[sync_player-步骤1] 选手 {player['name']} 平台={plat}, URL={url}")
-            if old and self.obs.source_exists(old):
-                if old != desired:
-                    if self.obs.source_exists(desired):
-                        self.obs.remove_source(desired)
-                    if not self.obs.rename_source(old, desired):
-                        self.obs.remove_source(old)
-                        self.obs.create_browser_source(desired, url)
-            elif not self.obs.source_exists(desired):
-                log("系统", f"[sync_player-步骤2] 创建浏览器源: {desired}")
-                self.obs.create_browser_source(desired, url)
-            player["obs_source_name"] = desired
-            log("系统", f"[sync_player-完成] {player['name']} -> {desired} (浏览器源)")
+        # 统一所有平台: 创建 VLC 源读取 RTMP 流
+        # URL 由 streamlink 解析网页链接获得，OBS VLC 源读取本地 RTMP 流
+        desired = f"{player['name']}_{player['view_label']}_{player['hotkey']}"
+        rtmp_url = f"rtmp://localhost:1935/live/{player['stream_name']}"
+        old = player.get("obs_source_name")
+        if old and self.obs.source_exists(old):
+            if old != desired:
+                if self.obs.source_exists(desired):
+                    self.obs.remove_source(desired)
+                if not self.obs.rename_source(old, desired):
+                    self.obs.remove_source(old)
+                    self.obs.create_vlc(desired, rtmp_url)
+        elif not self.obs.source_exists(desired):
+            log("系统", f"[sync_player] 创建 VLC 源: {desired}")
+            self.obs.create_vlc(desired, rtmp_url)
+        player["obs_source_name"] = desired
+        log("系统", f"sync_player 完成: {player['name']} -> {desired} (VLC源)")
 
     def _cleanup_edge_profiles(self):
         profiles_dir = os.path.join(BASE_DIR, "edge_profiles")
