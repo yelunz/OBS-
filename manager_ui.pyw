@@ -311,6 +311,8 @@ class OBSController:
         self.ws.call(requests.SetInputMute(inputName=name, inputMuted=True))
         self.set_visibility(name, False)
         log("系统", f"VLC 源 {name} 已静音并隐藏")
+        # 主动触发播放: always_play 有时不生效，用 TriggerMediaInputAction 兜底
+        self.trigger_media_play(name)
 
     def update_vlc_url(self, name, url):
         log("系统", f"刷新 OBS 源: {name} 新 URL: {url}")
@@ -427,6 +429,36 @@ class OBSController:
                 sceneItemId=m[name]["id"],
                 sceneItemEnabled=visible
             ))
+
+    def trigger_media_play(self, name):
+        """主动触发VLC源播放，解决 always_play 不生效导致画面不显示的问题"""
+        try:
+            self.ws.call(requests.TriggerMediaInputAction(
+                inputName=name,
+                mediaAction="OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PLAY"
+            ))
+            log("系统", f"[OBS-触发播放] {name}")
+        except Exception as e:
+            log("系统", f"[OBS-触发播放失败] {name}: {e}")
+
+    def trigger_media_restart(self, name):
+        """重启VLC源播放，用于刷新功能"""
+        try:
+            self.ws.call(requests.TriggerMediaInputAction(
+                inputName=name,
+                mediaAction="OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
+            ))
+            log("系统", f"[OBS-重启播放] {name}")
+        except Exception as e:
+            log("系统", f"[OBS-重启播放失败] {name}: {e}")
+
+    def get_media_state(self, name):
+        """获取VLC源播放状态，返回 None 或状态字符串"""
+        try:
+            resp = self.ws.call(requests.GetMediaInputStatus(inputName=name))
+            return resp.getMediaState()
+        except Exception:
+            return None
 
     def set_source_index(self, name, index):
         """调整场景项的层级顺序 (index 越大越在上层)"""
