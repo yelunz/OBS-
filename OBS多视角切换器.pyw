@@ -1350,26 +1350,31 @@ class MonitorWindow:
         self.cell_width = cell_w
         self.cell_height = cell_h
 
+        # 卡片间隔 (gap): 视觉上分隔每个卡片
+        gap = 6
         for idx, player in enumerate(self.players):
             name = player["name"]
             if name not in self.grid_widgets:
                 continue
             row = idx // cols
             col = idx % cols
-            x = 10 + col * cell_w
-            y = 10 + row * cell_h
+            x = gap + col * (cell_w + gap)
+            y = gap + row * (cell_h + gap)
+            # 实际卡片尺寸 = cell 尺寸 - 间隔 (让卡片间有缝隙)
+            card_w = cell_w - gap
+            card_h = cell_h - gap
             frame, canvas, top_bar, vol_label, btn_minus, btn_plus = self.grid_widgets[name]
-            frame.place(x=x, y=y, width=cell_w, height=cell_h)
-            # 卡片式布局: top_bar(22) + canvas(中间) + bottom_bar(28)
-            top_h = 22
-            bottom_h = 28
-            canvas_h = cell_h - top_h - bottom_h
-            top_bar.place(x=0, y=0, width=cell_w, height=top_h)
-            canvas.place(x=0, y=top_h, width=cell_w, height=canvas_h)
+            frame.place(x=x, y=y, width=card_w, height=card_h)
+            # 卡片式布局: top_bar(24) + canvas(中间) + bottom_bar(32)
+            top_h = 24
+            bottom_h = 32
+            canvas_h = card_h - top_h - bottom_h
+            top_bar.place(x=0, y=0, width=card_w, height=top_h)
+            canvas.place(x=0, y=top_h, width=card_w, height=canvas_h)
             # bottom_bar 显式 place 适配 cell 宽度
             try:
                 bottom_bar = btn_minus.master  # bottom_bar 是 btn_minus 的父容器
-                bottom_bar.place(x=0, y=top_h + canvas_h, width=cell_w, height=bottom_h)
+                bottom_bar.place(x=0, y=top_h + canvas_h, width=card_w, height=bottom_h)
             except Exception:
                 pass
 
@@ -1383,47 +1388,49 @@ class MonitorWindow:
             return
 
         # 卡片式布局: 顶部名字栏 + 中间视频区 + 底部控制栏
-        frame = tk.Frame(self.container, bg=BORDER, highlightthickness=1, highlightbackground=BORDER)
+        # 使用 CARD_BG 作为卡片背景, 与容器 PAGE_BG 形成对比
+        frame = tk.Frame(self.container, bg=CARD_BG, highlightthickness=2, highlightbackground=BORDER)
         # 顶部栏: 选手名 + 平台
         top_bar = tk.Label(frame, text=f"  {name}  [{plat}]", bg=ELEVATED_BG, fg=TEXT_PRIMARY,
-                           font=FONT_SMALL, highlightthickness=0, anchor="w")
-        # 中间: 视频画面 canvas
-        canvas = tk.Canvas(frame, bg=PAGE_BG, highlightthickness=0)
-        # 底部控制栏: − [百分比] + (居中布局，移除静音按钮)
+                           font=FONT_BODY_BOLD, highlightthickness=0, anchor="w", pady=2)
+        # 中间: 视频画面 canvas (黑色背景模拟播放器)
+        canvas = tk.Canvas(frame, bg="#000000", highlightthickness=0)
+        # 底部控制栏: [−] [百分比] [+] (按钮式样式, 居中布局)
         bottom_bar = tk.Frame(frame, bg=ELEVATED_BG, highlightthickness=0)
-        btn_minus = tk.Label(bottom_bar, text="  −  ", bg=ELEVATED_BG, fg=TEXT_PRIMARY,
-                             font=FONT_HEADING, highlightthickness=0, cursor="hand2",
-                             padx=8, pady=2)
+        # 按钮: 使用 Frame 作为按钮容器, 带背景色+圆角模拟效果, 增大点击区域
+        btn_minus = tk.Label(bottom_bar, text="  −  ", bg=BORDER, fg=TEXT_PRIMARY,
+                             font=FONT_LARGE, highlightthickness=0, cursor="hand2",
+                             padx=12, pady=2)
         vol_label = tk.Label(bottom_bar, text="50%", bg=ELEVATED_BG, fg=TEXT_SECONDARY,
-                             font=FONT_BODY_BOLD, highlightthickness=0, width=6)
-        btn_plus = tk.Label(bottom_bar, text="  +  ", bg=ELEVATED_BG, fg=TEXT_PRIMARY,
-                            font=FONT_HEADING, highlightthickness=0, cursor="hand2",
-                            padx=8, pady=2)
+                             font=FONT_BODY_BOLD, highlightthickness=0, width=7)
+        btn_plus = tk.Label(bottom_bar, text="  +  ", bg=BORDER, fg=TEXT_PRIMARY,
+                            font=FONT_TITLE, highlightthickness=0, cursor="hand2",
+                            padx=12, pady=2)
         # 居中布局: 两侧弹性间距 + [− 百分比 +]
         tk.Label(bottom_bar, bg=ELEVATED_BG, highlightthickness=0).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        btn_minus.pack(side=tk.LEFT, padx=(0, 4))
-        vol_label.pack(side=tk.LEFT, padx=4)
-        btn_plus.pack(side=tk.LEFT, padx=(4, 0))
+        btn_minus.pack(side=tk.LEFT, padx=(0, 6))
+        vol_label.pack(side=tk.LEFT, padx=6)
+        btn_plus.pack(side=tk.LEFT, padx=(6, 0))
         tk.Label(bottom_bar, bg=ELEVATED_BG, highlightthickness=0).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # 注册 tk 控件主题更新
-        self._tk_widgets.append((canvas, "bg", LIGHT_THEME["PAGE_BG"], DARK_THEME["PAGE_BG"]))
+        self._tk_widgets.append((canvas, "bg", "#000000", "#000000"))
         self._tk_widgets.append((top_bar, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
         self._tk_widgets.append((top_bar, "fg", LIGHT_THEME["TEXT_PRIMARY"], DARK_THEME["TEXT_PRIMARY"]))
-        self._tk_widgets.append((frame, "bg", LIGHT_THEME["BORDER"], DARK_THEME["BORDER"]))
+        self._tk_widgets.append((frame, "bg", LIGHT_THEME["CARD_BG"], DARK_THEME["CARD_BG"]))
         self._tk_widgets.append((frame, "highlightbackground", LIGHT_THEME["BORDER"], DARK_THEME["BORDER"]))
         self._tk_widgets.append((bottom_bar, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
-        self._tk_widgets.append((btn_minus, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
+        self._tk_widgets.append((btn_minus, "bg", LIGHT_THEME["BORDER"], DARK_THEME["BORDER"]))
         self._tk_widgets.append((btn_minus, "fg", LIGHT_THEME["TEXT_PRIMARY"], DARK_THEME["TEXT_PRIMARY"]))
         self._tk_widgets.append((vol_label, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
         self._tk_widgets.append((vol_label, "fg", LIGHT_THEME["TEXT_SECONDARY"], DARK_THEME["TEXT_SECONDARY"]))
-        self._tk_widgets.append((btn_plus, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
+        self._tk_widgets.append((btn_plus, "bg", LIGHT_THEME["BORDER"], DARK_THEME["BORDER"]))
         self._tk_widgets.append((btn_plus, "fg", LIGHT_THEME["TEXT_PRIMARY"], DARK_THEME["TEXT_PRIMARY"]))
 
         frame.place(x=0, y=0, width=100, height=100)
-        top_bar.place(x=0, y=0, width=100, height=22)
-        canvas.place(x=0, y=22, width=100, height=50)
-        bottom_bar.place(x=0, y=72, width=100, height=28)
+        top_bar.place(x=0, y=0, width=100, height=24)
+        canvas.place(x=0, y=24, width=100, height=44)
+        bottom_bar.place(x=0, y=68, width=100, height=32)
 
         # 存储控件引用: (frame, canvas, top_bar, vol_label, btn_minus, btn_plus)
         self.grid_widgets[name] = (frame, canvas, top_bar, vol_label, btn_minus, btn_plus)
@@ -1435,6 +1442,11 @@ class MonitorWindow:
         btn_plus.bind("<ButtonPress-1>", lambda e, n=name: self._start_repeat(n, 5))
         btn_minus.bind("<ButtonRelease-1>", lambda e: self._stop_repeat())
         btn_plus.bind("<ButtonRelease-1>", lambda e: self._stop_repeat())
+        # hover 效果: 鼠标进入变色, 离开恢复
+        btn_minus.bind("<Enter>", lambda e, w=btn_minus: w.configure(bg=ACCENT, fg="#FFFFFF"))
+        btn_minus.bind("<Leave>", lambda e, w=btn_minus: w.configure(bg=BORDER, fg=TEXT_PRIMARY))
+        btn_plus.bind("<Enter>", lambda e, w=btn_plus: w.configure(bg=ACCENT, fg="#FFFFFF"))
+        btn_plus.bind("<Leave>", lambda e, w=btn_plus: w.configure(bg=BORDER, fg=TEXT_PRIMARY))
 
         if plat == "twitch":
             # Twitch: VLC 嵌入 canvas 播放 RTMP 流 (高帧率)
@@ -1629,7 +1641,7 @@ class MonitorWindow:
                     img_data = img_data.split(",", 1)[-1]
                 img_bytes = base64.b64decode(img_data)
                 pil_img = Image.open(io.BytesIO(img_bytes))
-                # 在主线程更新 canvas (含缩放适配)
+                # 在主线程更新 canvas (保持16:9宽高比, 黑边填充不形变)
                 def _draw(n=name, img=pil_img):
                     if not self.screenshot_running.get(n, False) or self._closed:
                         return
@@ -1641,9 +1653,18 @@ class MonitorWindow:
                             cw = c.winfo_width()
                             ch = c.winfo_height()
                             if cw > 1 and ch > 1:
-                                # 按canvas实际尺寸缩放图片 (LANCZOS 高质量)
-                                resized = img.resize((cw, ch), Image.LANCZOS)
-                                photo = ImageTk.PhotoImage(resized)
+                                # 保持原图宽高比, 按canvas尺寸等比缩放, 不足部分用黑边填充
+                                img_w, img_h = img.size
+                                scale = min(cw / img_w, ch / img_h)
+                                new_w = int(img_w * scale)
+                                new_h = int(img_h * scale)
+                                resized = img.resize((new_w, new_h), Image.LANCZOS)
+                                # 创建黑底画布, 居中粘贴缩放后的图片
+                                canvas_img = Image.new("RGB", (cw, ch), "#000000")
+                                offset_x = (cw - new_w) // 2
+                                offset_y = (ch - new_h) // 2
+                                canvas_img.paste(resized, (offset_x, offset_y))
+                                photo = ImageTk.PhotoImage(canvas_img)
                             else:
                                 photo = ImageTk.PhotoImage(img)
                             c.delete("all")
@@ -2261,71 +2282,103 @@ class ManagerApp:
         return page
 
     def _refresh_pool_cards(self):
-        """刷新活跃池卡片网格 (显示池中所有选手，含已关闭的)"""
-        # 清除旧卡片
-        for name in list(self._pool_cards.keys()):
-            entry = self._pool_cards.pop(name)
+        """刷新活跃池卡片网格 (增量更新: 仅创建/删除变化的卡片, 不重建已有卡片)"""
+        pool = list(self.active_players)
+        pool_names = {p["name"] for p in pool}
+
+        # 清除空状态占位
+        if "_empty" in self._pool_cards:
+            entry = self._pool_cards.pop("_empty")
             entry[0].destroy()
 
-        pool = list(self.active_players)
+        # 删除不在池中的卡片
+        for name in list(self._pool_cards.keys()):
+            if name not in pool_names:
+                entry = self._pool_cards.pop(name)
+                entry[0].destroy()
+
         if not pool:
-            empty = ctk.CTkLabel(self.pool_grid, text="暂无活跃选手，点击「添加视角」按钮添加", font=FONT_SMALL,
-                                 text_color=TEXT_SECONDARY)
-            empty.grid(row=0, column=0, padx=4, pady=4, sticky="w")
-            self._pool_cards["_empty"] = (empty, empty, None, None)
+            if "_empty" not in self._pool_cards:
+                empty = ctk.CTkLabel(self.pool_grid, text="暂无活跃选手，点击「添加视角」按钮添加", font=FONT_SMALL,
+                                     text_color=TEXT_SECONDARY)
+                empty.grid(row=0, column=0, padx=4, pady=4, sticky="w")
+                self._pool_cards["_empty"] = (empty, empty, None, None)
             return
 
         # 每行最多4个卡片
         cols = 4
-        for i, p in enumerate(sorted(pool, key=lambda x: (isinstance(x.get("view_label"), int), x.get("view_label", "")))):
+        sorted_pool = sorted(pool, key=lambda x: (isinstance(x.get("view_label"), int), x.get("view_label", "")))
+        for i, p in enumerate(sorted_pool):
             row = i // cols
             col = i % cols
-
+            name = p["name"]
             is_active = p.get("active", False)
             border_c = ACCENT if is_active else BORDER
-            card = ctk.CTkFrame(self.pool_grid, fg_color=ELEVATED_BG, corner_radius=8, border_width=1, border_color=border_c)
-            card.grid(row=row, column=col, padx=3, pady=3, sticky="ew")
-            self._register_frame(card, "elevated")
-            self.pool_grid.columnconfigure(col, weight=1, uniform="pool")
 
-            card_inner = ctk.CTkFrame(card, fg_color="transparent")
-            card_inner.pack(fill=tk.X, padx=10, pady=8)
-
-            name_lbl = ctk.CTkLabel(card_inner, text=p["name"], font=FONT_BODY_BOLD,
-                                    text_color=TEXT_PRIMARY)
-            name_lbl.pack(anchor="w")
-
-            status_text = f"视角 {p.get('view_label', '?')}  ● 推流中" if is_active else f"视角 {p.get('view_label', '?')}  ○ 已关闭"
-            status_color = SUCCESS if is_active else TEXT_SECONDARY
-            view_lbl = ctk.CTkLabel(card_inner, text=status_text,
-                                    font=FONT_SMALL, text_color=status_color)
-            view_lbl.pack(anchor="w")
-
-            # 音量滑条 + 百分比标签 (仅活跃且有OBS源的选手显示)
-            if is_active and p.get("obs_source_name"):
-                vol_row = ctk.CTkFrame(card_inner, fg_color="transparent")
-                vol_row.pack(fill=tk.X, pady=(4, 0))
-                vol_label = ctk.CTkLabel(vol_row, text="音量", font=FONT_SMALL,
-                                         text_color=TEXT_SECONDARY, width=28)
-                vol_label.pack(side=tk.LEFT)
-                slider = ctk.CTkSlider(vol_row, from_=0, to=100, width=80, height=16,
-                                       fg_color=BORDER, progress_color=ACCENT,
-                                       button_color=ACCENT, button_hover_color=ACCENT_HOVER,
-                                       command=lambda v, pl=p: self._on_pool_volume_change(pl, v))
-                slider.set(50)  # 默认值, 定时刷新会同步真实值
-                slider.pack(side=tk.LEFT, padx=(4, 4), fill=tk.X, expand=True)
-                pct_lbl = ctk.CTkLabel(vol_row, text="50%", font=FONT_SMALL,
-                                       text_color=TEXT_SECONDARY, width=36)
-                pct_lbl.pack(side=tk.LEFT)
-                self._pool_cards[p["name"]] = (card, name_lbl, slider, pct_lbl)
+            if name in self._pool_cards:
+                # 已存在: 仅更新状态 (不重建, 避免闪烁和滑条重置)
+                card, name_lbl, slider, pct_lbl = self._pool_cards[name]
+                card.configure(border_color=border_c)
+                # name_lbl 无需更新 (选手名不变)
+                # 更新底部子控件引用
+                try:
+                    card_inner = card.winfo_children()[0]
+                    children = card_inner.winfo_children()
+                    # 第二个子控件是 view_lbl (状态标签)
+                    if len(children) > 1:
+                        status_text = f"视角 {p.get('view_label', '?')}  ● 推流中" if is_active else f"视角 {p.get('view_label', '?')}  ○ 已关闭"
+                        status_color = SUCCESS if is_active else TEXT_SECONDARY
+                        children[1].configure(text=status_text, text_color=status_color)
+                except Exception:
+                    pass
+                # 确保 grid 位置正确
+                card.grid(row=row, column=col, padx=3, pady=3, sticky="ew")
             else:
-                self._pool_cards[p["name"]] = (card, name_lbl, None, None)
+                # 新选手: 创建卡片
+                card = ctk.CTkFrame(self.pool_grid, fg_color=ELEVATED_BG, corner_radius=8, border_width=1, border_color=border_c)
+                card.grid(row=row, column=col, padx=3, pady=3, sticky="ew")
+                self._register_frame(card, "elevated")
 
-            # 右键菜单
-            card.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
-            card_inner.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
-            name_lbl.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
-            view_lbl.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
+                card_inner = ctk.CTkFrame(card, fg_color="transparent")
+                card_inner.pack(fill=tk.X, padx=10, pady=8)
+
+                name_lbl = ctk.CTkLabel(card_inner, text=p["name"], font=FONT_BODY_BOLD,
+                                        text_color=TEXT_PRIMARY)
+                name_lbl.pack(anchor="w")
+
+                status_text = f"视角 {p.get('view_label', '?')}  ● 推流中" if is_active else f"视角 {p.get('view_label', '?')}  ○ 已关闭"
+                status_color = SUCCESS if is_active else TEXT_SECONDARY
+                view_lbl = ctk.CTkLabel(card_inner, text=status_text,
+                                        font=FONT_SMALL, text_color=status_color)
+                view_lbl.pack(anchor="w")
+
+                # 音量滑条 + 百分比标签 (仅活跃且有OBS源的选手显示)
+                if is_active and p.get("obs_source_name"):
+                    vol_row = ctk.CTkFrame(card_inner, fg_color="transparent")
+                    vol_row.pack(fill=tk.X, pady=(4, 0))
+                    vol_label = ctk.CTkLabel(vol_row, text="音量", font=FONT_SMALL,
+                                             text_color=TEXT_SECONDARY, width=28)
+                    vol_label.pack(side=tk.LEFT)
+                    slider = ctk.CTkSlider(vol_row, from_=0, to=100, width=80, height=16,
+                                           fg_color=BORDER, progress_color=ACCENT,
+                                           button_color=ACCENT, button_hover_color=ACCENT_HOVER,
+                                           command=lambda v, pl=p: self._on_pool_volume_change(pl, v))
+                    slider.set(50)  # 初始值, 定时刷新会同步真实值
+                    slider.pack(side=tk.LEFT, padx=(4, 4), fill=tk.X, expand=True)
+                    pct_lbl = ctk.CTkLabel(vol_row, text="50%", font=FONT_SMALL,
+                                           text_color=TEXT_SECONDARY, width=36)
+                    pct_lbl.pack(side=tk.LEFT)
+                    self._pool_cards[name] = (card, name_lbl, slider, pct_lbl)
+                else:
+                    self._pool_cards[name] = (card, name_lbl, None, None)
+
+                # 右键菜单
+                card.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
+                card_inner.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
+                name_lbl.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
+                view_lbl.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
+
+            self.pool_grid.columnconfigure(col, weight=1, uniform="pool")
 
     def _on_pool_volume_change(self, player, value):
         """仪表盘滑条音量变化回调"""
