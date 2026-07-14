@@ -1397,15 +1397,15 @@ class MonitorWindow:
         canvas = tk.Canvas(frame, bg="#000000", highlightthickness=0)
         # 底部控制栏: [−] [百分比] [+] (按钮式样式, 居中布局)
         bottom_bar = tk.Frame(frame, bg=ELEVATED_BG, highlightthickness=0)
-        # 按钮: 使用 Frame 作为按钮容器, 带背景色+圆角模拟效果, 增大点击区域
+        # 按钮: 统一使用 FONT_XL (26pt bold) 保证视觉匹配
         btn_minus = tk.Label(bottom_bar, text="  −  ", bg=BORDER, fg=TEXT_PRIMARY,
-                             font=FONT_LARGE, highlightthickness=0, cursor="hand2",
-                             padx=12, pady=2)
+                             font=FONT_XL, highlightthickness=0, cursor="hand2",
+                             padx=12, pady=0)
         vol_label = tk.Label(bottom_bar, text="50%", bg=ELEVATED_BG, fg=TEXT_SECONDARY,
                              font=FONT_BODY_BOLD, highlightthickness=0, width=7)
         btn_plus = tk.Label(bottom_bar, text="  +  ", bg=BORDER, fg=TEXT_PRIMARY,
-                            font=FONT_TITLE, highlightthickness=0, cursor="hand2",
-                            padx=12, pady=2)
+                            font=FONT_XL, highlightthickness=0, cursor="hand2",
+                            padx=12, pady=0)
         # 居中布局: 两侧弹性间距 + [− 百分比 +]
         tk.Label(bottom_bar, bg=ELEVATED_BG, highlightthickness=0).pack(side=tk.LEFT, fill=tk.X, expand=True)
         btn_minus.pack(side=tk.LEFT, padx=(0, 6))
