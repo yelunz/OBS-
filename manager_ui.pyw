@@ -2084,7 +2084,9 @@ class ManagerApp:
         # 卡片网格容器
         self.pool_grid = ctk.CTkFrame(pool_inner, fg_color="transparent")
         self.pool_grid.pack(fill=tk.X, pady=(6, 0))
-        self._pool_cards = {}  # name -> (frame, label)
+        self._pool_cards = {}  # name -> (card, name_lbl, slider, pct_lbl)
+        self._volume_sync_after_id = None  # 音量定时刷新的 after id
+        self._volume_sync_active = False   # 音量定时刷新是否运行
 
         # ── Auto-detect ──
         auto_frame = ctk.CTkFrame(page, fg_color="transparent")
@@ -2878,6 +2880,35 @@ class ManagerApp:
 
         self._update_log_combo()
         self._update_monitor()
+        # 启动音量定时刷新 (如果尚未运行)
+        if not self._volume_sync_active:
+            self._volume_sync_active = True
+            self._sync_volumes()
+
+    def _sync_volumes(self):
+        """定时同步所有活跃选手的音量到 UI (500ms 间隔)"""
+        if not self.obs or not self.obs.connected:
+            self._volume_sync_after_id = self.root.after(2000, self._sync_volumes)
+            return
+        # 同步仪表盘滑条
+        for name, entry in list(self._pool_cards.items()):
+            if len(entry) < 4 or not entry[2] or not entry[3]:
+                continue
+            player = self.find_player_in_any(name)
+            if not player or not player.get("obs_source_name"):
+                continue
+            vol = self.obs.get_volume(player["obs_source_name"])
+            if vol is not None:
+                entry[2].set(vol)
+                entry[3].configure(text=f"{vol}%")
+        # 同步监视器卡片 (主窗口 + 弹出窗口)
+        for mw in [self.monitor_window, self.popup_monitor]:
+            if mw and not mw._closed:
+                try:
+                    mw._sync_volume_ui(self.obs)
+                except Exception:
+                    pass
+        self._volume_sync_after_id = self.root.after(500, self._sync_volumes)
 
     def _update_monitor(self):
         if self.monitor_window and not self.monitor_window._closed:
