@@ -15,7 +15,7 @@ AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppCopyright=Copyright (c) 2026 创作者. 保留所有权利.
-AppLicense=LICENSE.txt
+LicenseFile=LICENSE.txt
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
@@ -31,9 +31,9 @@ PrivilegesRequired=admin
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
 
-; 界面语言
+; 界面语言 (使用本地中文语言文件)
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
 
 ; 安装的任务选项 (桌面快捷方式)
 [Tasks]
@@ -48,6 +48,8 @@ Source: "dist\OBS多视角切换器\_internal\*"; DestDir: "{app}\_internal"; Fl
 ; 配置文件和媒体工具 (放根目录, 用户可修改)
 Source: "mediamtx.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "mediamtx.yml"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+Source: "ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "ffprobe.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "config.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
 Source: "app_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; LICENSE 文件

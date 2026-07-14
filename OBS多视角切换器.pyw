@@ -571,8 +571,8 @@ else:
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 MEDIAMTX_EXE = os.path.join(BASE_DIR, "mediamtx.exe")
 MEDIAMTX_YML = os.path.join(BASE_DIR, "mediamtx.yml")
-FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
-FFPROBE = r"C:\ffmpeg\bin\ffprobe.exe"
+FFMPEG = os.path.join(BASE_DIR, "ffmpeg.exe")
+FFPROBE = os.path.join(BASE_DIR, "ffprobe.exe")
 mediamtx_proc = None
 AUTO_DETECT_INTERVAL = 120
 DEDICATED_SCENE = "多视角切换"

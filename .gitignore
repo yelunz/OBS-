@@ -44,3 +44,7 @@ installer_output/
 build/
 edge_profiles/
 .uploads/
+
+# 大体积可执行文件 (打包时包含, 但不提交git)
+ffmpeg.exe
+ffprobe.exe
