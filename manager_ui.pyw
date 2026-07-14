@@ -1005,6 +1005,8 @@ class MonitorWindow:
         self.cell_height = 200
         self.empty_label = None
         self._closed = False  # 防止关闭后旧回调创建新网格
+        self._repeat_after_id = None  # 长按连续调节的 after id
+        self.muted_players = {}  # name -> bool (静音状态跟踪)
 
         # B站监视器管线 (streamlink + ffmpeg → RTMP)
         self.bilibili_procs = {}      # name -> (p1, p2) subprocess
@@ -1447,6 +1449,146 @@ class MonitorWindow:
                 threading.Thread(target=self._screenshot_thread, args=(name, src_name), daemon=True).start()
                 log("系统", f"[监视器-显示-截图] 启动截图轮询: {name} -> {src_name}")
 
+    def _on_volume_inc(self, name, step=5):
+        """音量增加"""
+        player = self.app.find_player_in_any(name)
+        if not player or not player.get("obs_source_name"):
+            return
+        if not self.app.obs or not self.app.obs.connected:
+            return
+        vol = self.app.obs.get_volume(player["obs_source_name"])
+        if vol is None:
+            vol = 50
+        new_vol = min(100, vol + step)
+        self.app.obs.set_volume(player["obs_source_name"], new_vol)
+        self._update_volume_label(name, new_vol)
+
+    def _on_volume_dec(self, name, step=5):
+        """音量减少"""
+        player = self.app.find_player_in_any(name)
+        if not player or not player.get("obs_source_name"):
+            return
+        if not self.app.obs or not self.app.obs.connected:
+            return
+        vol = self.app.obs.get_volume(player["obs_source_name"])
+        if vol is None:
+            vol = 50
+        new_vol = max(0, vol - step)
+        self.app.obs.set_volume(player["obs_source_name"], new_vol)
+        self._update_volume_label(name, new_vol)
+
+    def _on_mute_toggle(self, name):
+        """切换静音状态 (OBS 原生 SetInputMute)"""
+        player = self.app.find_player_in_any(name)
+        if not player or not player.get("obs_source_name"):
+            return
+        if not self.app.obs or not self.app.obs.connected:
+            return
+        src = player["obs_source_name"]
+        try:
+            # 查询当前静音状态并切换
+            resp = self.app.obs.ws.call(requests.GetInputMute(inputName=src))
+            is_muted = resp.getInputMuted()
+            new_muted = not is_muted
+            self.app.obs.ws.call(requests.SetInputMute(inputName=src, inputMuted=new_muted))
+            self.muted_players[name] = new_muted
+            # 更新按钮显示
+            if name in self.grid_widgets:
+                _, _, _, _, btn_mute, _, _ = self.grid_widgets[name]
+                if new_muted:
+                    btn_mute.configure(text=" 🔇 ", fg=TEXT_PRIMARY)
+                else:
+                    btn_mute.configure(text=" 🔊 ", fg=TEXT_SECONDARY)
+            log("系统", f"[监视器-静音] {name} -> {'静音' if new_muted else '取消静音'}")
+        except Exception as e:
+            log("系统", f"[监视器-静音-失败] {name}: {e}")
+
+    def _update_volume_label(self, name, vol):
+        """更新指定视角的音量百分比标签"""
+        if name not in self.grid_widgets:
+            return
+        _, _, _, vol_label, _, _, _ = self.grid_widgets[name]
+        try:
+            vol_label.configure(text=f"{vol}%")
+        except Exception:
+            pass
+
+    def _start_repeat(self, name, step):
+        """长按按钮开始连续调节 (300ms 初始延迟 + 150ms 间隔)"""
+        self._stop_repeat()
+        is_inc = step > 0
+        def _first():
+            self._repeat_after_id = self.win.after(150, lambda: self._repeat_action(name, step, is_inc))
+        self._repeat_after_id = self.win.after(300, _first)
+
+    def _repeat_action(self, name, step, is_inc):
+        """连续调节动作 (每 150ms 触发一次)"""
+        if self._closed:
+            return
+        if is_inc:
+            self._on_volume_inc(name, abs(step))
+        else:
+            self._on_volume_dec(name, abs(step))
+        self._repeat_after_id = self.win.after(150, lambda: self._repeat_action(name, step, is_inc))
+
+    def _stop_repeat(self):
+        """停止连续调节"""
+        if self._repeat_after_id is not None:
+            try:
+                self.win.after_cancel(self._repeat_after_id)
+            except Exception:
+                pass
+            self._repeat_after_id = None
+
+    def _sync_volume_ui(self, obs):
+        """同步所有卡片的音量显示 (由 App._sync_volumes 调用, 500ms 间隔)
+        - 读取 OBS 实际音量并更新百分比标签
+        - 同步静音按钮状态
+        - 当前视角高亮边框
+        """
+        if self._closed:
+            return
+        if not obs or not obs.connected:
+            return
+        current_name = self.app.get_current_display_name()
+        for name, widgets in list(self.grid_widgets.items()):
+            try:
+                frame, canvas, top_bar, vol_label, btn_mute, btn_minus, btn_plus = widgets
+            except Exception:
+                continue
+            player = self.app.find_player_in_any(name)
+            if not player or not player.get("obs_source_name"):
+                continue
+            src = player["obs_source_name"]
+            # 音量百分比
+            vol = obs.get_volume(src)
+            if vol is not None:
+                try:
+                    vol_label.configure(text=f"{vol}%")
+                except Exception:
+                    pass
+            # 静音状态
+            try:
+                resp = obs.ws.call(requests.GetInputMute(inputName=src))
+                is_muted = resp.getInputMuted()
+                self.muted_players[name] = is_muted
+                if is_muted:
+                    btn_mute.configure(text=" 🔇 ", fg=TEXT_PRIMARY)
+                else:
+                    btn_mute.configure(text=" 🔊 ", fg=TEXT_SECONDARY)
+            except Exception:
+                pass
+            # 当前视角高亮边框
+            try:
+                if name == current_name:
+                    frame.configure(highlightbackground=ACCENT, highlightthickness=2)
+                    top_bar.configure(bg=ACCENT, fg="#FFFFFF")
+                else:
+                    frame.configure(highlightbackground=BORDER, highlightthickness=1)
+                    top_bar.configure(bg=ELEVATED_BG, fg=TEXT_PRIMARY)
+            except Exception:
+                pass
+
     def _hide_grid(self, name):
         """隐藏并销毁指定视角的网格 (移除 paused_players 机制，直接销毁避免状态不一致)"""
         if name not in self.grid_widgets:
@@ -1663,6 +1805,8 @@ class MonitorWindow:
             pass
         # 停止周期性刷新循环
         self._stop_refresh_loop()
+        # 停止长按连续调节
+        self._stop_repeat()
         # 完全清空所有状态 (VLC/管线/网格/paased)
         self._full_cleanup()
         if not self.embedded:
