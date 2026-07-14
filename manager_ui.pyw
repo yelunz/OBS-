@@ -2616,16 +2616,42 @@ class ManagerApp:
             log("系统", f"[切换-异常] {player['name']}: {e}")
 
     def refresh_player(self, player):
-        if player["platform"] not in ("twitch",):
-            return
+        """刷新选手推流: 重启推流管线 + 重启OBS VLC源 + 重连监视器VLC
+        三平台通用，不再仅限 Twitch"""
         if not player.get("active"):
             self.activate_player(player)
             return
-        self.deactivate_player(player)
-        def delayed_activate():
-            time.sleep(2)
-            self.activate_player(player)
-        threading.Thread(target=delayed_activate, daemon=True).start()
+        name = player["name"]
+        log("系统", f"[刷新-开始] {name} 平台={player['platform']}")
+        def do_refresh():
+            try:
+                # 1. 停止并重启推流管线
+                stop_stream(player)
+                time.sleep(1)
+                if not start_stream(player, self.obs):
+                    log("系统", f"[刷新-推流失败] {name}")
+                    self.root.after(0, lambda: messagebox.showwarning("刷新", f"{name} 推流重启失败"))
+                    return
+                # 2. 重启 OBS VLC 源播放
+                src_name = player.get("obs_source_name")
+                if src_name and self.obs and self.obs.connected:
+                    self.obs.trigger_media_restart(src_name)
+                # 3. 重连监视器 VLC 实例
+                if self.monitor_window and not self.monitor_window._closed:
+                    if name in self.monitor_window.vlc_instances:
+                        try:
+                            _, mp, canvas = self.monitor_window.vlc_instances[name]
+                            mp.stop()
+                            time.sleep(0.5)
+                            mp.play()
+                            log("系统", f"[刷新-监视器VLC重连] {name}")
+                        except Exception as e:
+                            log("系统", f"[刷新-监视器VLC异常] {name}: {e}")
+                log("系统", f"[刷新-完成] {name}")
+                self.root.after(0, self.refresh_ui)
+            except Exception as e:
+                log("系统", f"[刷新-异常] {name}: {e}")
+        threading.Thread(target=do_refresh, daemon=True).start()
 
     # ---------- 通用方法 ----------
     def find_player_in_any(self, name):
