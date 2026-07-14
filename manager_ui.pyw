@@ -1954,16 +1954,26 @@ class ManagerApp:
                 pid = max_id
             else:
                 max_id = max(max_id, pid)
+            # 配置迁移: 统一 url 字段，兼容旧配置
+            url = p.get("url", "")
+            if not url:
+                # 旧配置迁移: 按平台从旧字段提取 URL
+                if p.get("platform") == "twitch":
+                    url = p.get("twitch_url", "") or p.get("channel", "")
+                    if url and not url.startswith("http"):
+                        url = f"https://www.twitch.tv/{url}"
+                elif p.get("platform") == "douyin":
+                    url = p.get("douyin_url", "")
+                elif p.get("platform") in ("bilibili", "custom_web"):
+                    url = p.get("browser_url", "")
             player_obj = {
                 "id": pid,
                 "name": p.get("name", ""),
                 "hotkey": p.get("hotkey", ""),
                 "platform": p.get("platform", "bilibili"),
                 "room_id": p.get("room_id", ""),
-                "twitch_url": p.get("twitch_url", "") or p.get("channel", ""),
-                "douyin_url": p.get("douyin_url", ""),
+                "url": url,  # 统一字段
                 "quality": p.get("quality", "best"),
-                "browser_url": p.get("browser_url", ""),
                 "view_label": normalize_view_label(p.get("view_label", 0)),
                 "stream_name": p.get("stream_name", f"player{pid}"),
                 "obs_source_name": "",  # 启动时清空，避免残留无效源名
