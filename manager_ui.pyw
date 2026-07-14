@@ -377,6 +377,19 @@ class OBSController:
         except Exception as e:
             log("系统", f"[创建浏览器源-步骤2-失败] 浏览器源创建失败: {name} - {e}")
 
+    def refresh_browser_source(self, name, url):
+        """刷新浏览器源: 重新设置 URL 触发页面重载"""
+        try:
+            settings = {"url": url}
+            self.ws.call(requests.SetInputSettings(
+                inputName=name,
+                inputSettings=settings,
+                overlay=False
+            ))
+            log("系统", f"[刷新浏览器源-完成] {name} URL={url}")
+        except Exception as e:
+            log("系统", f"[刷新浏览器源-失败] {name}: {e}")
+
     def get_source_screenshot(self, name, width=480, height=270, quality=50):
         """
         获取 OBS 源的截图 (返回 base64 编码的 JPEG 字符串)
@@ -614,15 +627,17 @@ def start_stream(player, obs=None):
     qual = player.get("quality", "best")
     name = player["name"]
 
+    # B站/抖音使用浏览器源, 不需要 streamlink 推流
+    if plat != "twitch":
+        log("系统", f"[推流-跳过] {name} 平台={plat} 使用浏览器源, 无需推流")
+        return True
+
     global mediamtx_proc
     if not mediamtx_proc or mediamtx_proc.poll() is not None:
         start_mediamtx()
     wait_for_mediamtx()
 
-    # 统一三平台: streamlink 解析网页链接 → ffmpeg 转封装为 RTMP
-    # Twitch: twitch.tv/频道名 (streamlink 原生支持)
-    # B站: live.bilibili.com/房间号 (streamlink bilibili 插件)
-    # 抖音: live.douyin.com/房间号 (streamlink douyin 插件, 自动处理token)
+    # Twitch: streamlink 解析网页链接 → ffmpeg 转封装为 RTMP
     url = player.get("url", "")
     if not url:
         log("系统", f"[推流-失败] {name} 无 url 字段")
@@ -938,6 +953,10 @@ class MonitorWindow:
 
         # B站监视器管线 (streamlink + ffmpeg → RTMP)
         self.bilibili_procs = {}      # name -> (p1, p2) subprocess
+        # 截图轮询: B站/抖音浏览器源的监视器显示
+        self.screenshot_canvases = {}  # name -> canvas (用于截图绘制)
+        self.screenshot_running = {}   # name -> bool (线程运行标志)
+        self.screenshot_after_ids = {} # name -> after id (UI更新定时器)
 
         if VLC_AVAILABLE:
             try:
@@ -1111,6 +1130,10 @@ class MonitorWindow:
         注意：本方法可能在子线程被调用，Tk 控件销毁必须通过 after 回到主线程执行
         """
         log("系统", "[监视器-全清] 开始清理所有状态")
+        # 停止所有截图轮询
+        for name in list(self.screenshot_running.keys()):
+            self.screenshot_running[name] = False
+        self.screenshot_canvases.clear()
         # 收集需要在子线程释放的 VLC 实例 (mp.stop/release 可能阻塞数秒)
         vlc_to_release = []
         for name in list(self.vlc_instances.keys()):
@@ -1313,16 +1336,23 @@ class MonitorWindow:
         self.grid_widgets[name] = (frame, canvas, name_label)
         log("系统", f"[监视器-显示-步骤2] 创建网格: {name}")
 
-        # 统一所有平台: VLC 嵌入 canvas 播放 RTMP 流
-        # (不再使用 OBS 截图轮询, VLC 帧率远高于截图)
-        if name not in self.vlc_instances:
-            default_sn = f"player{player['id']}"
-            stream_name = player.get("stream_name", default_sn)
-            rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
-            self.win.after(2000, self._start_vlc, name, canvas, rtmp_url)
-            # 6s 后兜底重试 (流未就绪时 VLC 可能连接失败)
-            self.win.after(6000, self._retry_vlc, name, canvas, rtmp_url)
-            log("系统", f"[监视器-显示-VLC] 安排 VLC 启动: {name} -> {rtmp_url}")
+        if plat == "twitch":
+            # Twitch: VLC 嵌入 canvas 播放 RTMP 流 (高帧率)
+            if name not in self.vlc_instances:
+                default_sn = f"player{player['id']}"
+                stream_name = player.get("stream_name", default_sn)
+                rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
+                self.win.after(2000, self._start_vlc, name, canvas, rtmp_url)
+                self.win.after(6000, self._retry_vlc, name, canvas, rtmp_url)
+                log("系统", f"[监视器-显示-VLC] 安排 VLC 启动: {name} -> {rtmp_url}")
+        else:
+            # B站/抖音: OBS 截图轮询绘制到 canvas (浏览器源无法用VLC嵌入)
+            src_name = player.get("obs_source_name")
+            if src_name:
+                self.screenshot_canvases[name] = canvas
+                self.screenshot_running[name] = True
+                threading.Thread(target=self._screenshot_thread, args=(name, src_name), daemon=True).start()
+                log("系统", f"[监视器-显示-截图] 启动截图轮询: {name} -> {src_name}")
 
     def _hide_grid(self, name):
         """隐藏并销毁指定视角的网格 (移除 paused_players 机制，直接销毁避免状态不一致)"""
@@ -1330,6 +1360,9 @@ class MonitorWindow:
             return
         frame, canvas, label = self.grid_widgets.pop(name)
         log("系统", f"[监视器-隐藏] 销毁网格: {name}")
+
+        # 停止截图轮询
+        self._stop_screenshot(name)
 
         # 停止 B站管线
         if name in self.bilibili_procs:
@@ -1355,6 +1388,74 @@ class MonitorWindow:
             frame.destroy()
         except:
             pass
+
+    def _screenshot_thread(self, name, src_name):
+        """截图轮询线程: 定期获取 OBS 源截图并绘制到 canvas
+        用于 B站/抖音浏览器源的监视器显示 (浏览器源无法用VLC嵌入)
+        """
+        import base64
+        import io
+        try:
+            from PIL import Image, ImageTk
+        except ImportError:
+            log("系统", f"[截图-失败] {name} PIL 不可用, 无法截图显示")
+            return
+
+        fail_count = 0
+        while self.screenshot_running.get(name, False) and not self._closed:
+            try:
+                if not self.app.obs or not self.app.obs.connected:
+                    time.sleep(1)
+                    continue
+                # 获取截图 (480x270 JPEG, 降低分辨率提高帧率)
+                img_data = self.app.obs.get_source_screenshot(src_name, width=480, height=270, quality=50)
+                if not img_data:
+                    fail_count += 1
+                    if fail_count % 10 == 1:
+                        log("系统", f"[截图-空] {name} 第{fail_count}次无数据 (源可能未渲染)")
+                    time.sleep(0.5)
+                    continue
+                fail_count = 0
+                # 解码 base64 → PIL Image → PhotoImage → canvas
+                if isinstance(img_data, str) and img_data.startswith("data:image"):
+                    img_data = img_data.split(",", 1)[-1]
+                img_bytes = base64.b64decode(img_data)
+                pil_img = Image.open(io.BytesIO(img_bytes))
+                photo = ImageTk.PhotoImage(pil_img)
+                # 在主线程更新 canvas
+                def _draw(n=name, p=photo):
+                    if not self.screenshot_running.get(n, False) or self._closed:
+                        return
+                    if n not in self.screenshot_canvases:
+                        return
+                    c = self.screenshot_canvases[n]
+                    try:
+                        if c.winfo_exists():
+                            c.delete("all")
+                            c.create_image(c.winfo_width()//2, c.winfo_height()//2, image=p, anchor=tk.CENTER)
+                            # 保持引用防止 GC
+                            c._screenshot_photo = p
+                    except:
+                        pass
+                try:
+                    self.win.after(0, _draw)
+                except:
+                    break
+                # 截图帧率: 约 10fps (平衡性能与流畅度)
+                time.sleep(0.1)
+            except Exception as e:
+                fail_count += 1
+                if fail_count % 10 == 1:
+                    log("系统", f"[截图-异常] {name}: {e}")
+                time.sleep(0.5)
+        log("系统", f"[截图-结束] {name} 线程退出")
+
+    def _stop_screenshot(self, name):
+        """停止指定视角的截图轮询"""
+        self.screenshot_running[name] = False
+        if name in self.screenshot_canvases:
+            del self.screenshot_canvases[name]
+        log("系统", f"[截图-停止] {name}")
 
     def _start_vlc(self, name, canvas, url):
         if not self.vlc_instance or not self.win.winfo_exists():
@@ -2428,16 +2529,21 @@ class ManagerApp:
             except Exception as e:
                 log("系统", f"[激活-sync_player异常] {player['name']}: {e}")
             self.save_config()
-            log("系统", f"启动推流线程: {player['name']}")
-            if not start_stream(player, self.obs):
-                time.sleep(2)
+            plat = player.get("platform")
+            if plat == "twitch":
+                # Twitch: 启动 streamlink 推流 + 进程监控
+                log("系统", f"启动推流线程: {player['name']}")
                 if not start_stream(player, self.obs):
-                    self.stream_status_cache[player["name"]] = False
-                    log("系统", f"推流启动失败: {player['name']}")
+                    time.sleep(2)
+                    if not start_stream(player, self.obs):
+                        self.stream_status_cache[player["name"]] = False
+                        log("系统", f"推流启动失败: {player['name']}")
+                else:
+                    log("系统", f"推流启动成功: {player['name']}")
+                    threading.Thread(target=_stream_process_monitor, args=(player, self.obs), daemon=True).start()
             else:
-                log("系统", f"推流启动成功: {player['name']}")
-                # 启动推流进程监控 (所有平台都用 streamlink 推流，都需要监控)
-                threading.Thread(target=_stream_process_monitor, args=(player, self.obs), daemon=True).start()
+                # B站/抖音: 浏览器源, 不需要推流
+                log("系统", f"[激活-浏览器源] {player['name']} 平台={plat} 使用浏览器源, 无需推流")
             self.root.after(0, self.refresh_ui)
         threading.Thread(target=do_sync_and_start, daemon=True).start()
         # 注意: 不在此处同步调用 refresh_ui，因为 refresh_ui 内部调用
@@ -2480,7 +2586,11 @@ class ManagerApp:
         threading.Thread(target=self._switch_thread, args=(player,), daemon=True).start()
 
     def _switch_thread(self, player):
-        """后台线程执行 OBS 切换: 恢复传统开关逻辑，所有非当前源隐藏并静音"""
+        """后台线程执行 OBS 切换:
+        - VLC 源(Twitch): 隐藏 + 静音
+        - 浏览器源(B站/抖音): 保持可见用于截图 + 静音
+        - 当前源: 显示 + 取消静音 + 触发播放(仅VLC)
+        """
         try:
             src_name = player.get("obs_source_name")
             if not src_name:
@@ -2493,20 +2603,23 @@ class ManagerApp:
             with self.data_lock:
                 active_snapshot = list(self.active_players)
 
-            # 1. 隐藏并静音所有其他源 (恢复传统逻辑, 不再保留浏览器源可见)
+            # 1. 处理所有其他源
             for p in active_snapshot:
                 p_src = p.get("obs_source_name")
                 if not p_src or p_src == src_name or p_src not in item_map:
                     continue
-                self.obs.set_mute(p_src, True)
-                self.obs.set_visibility(p_src, False)
+                self.obs.set_mute(p_src, True)  # 全部静音
+                # VLC 源(Twitch)隐藏; 浏览器源(B站/抖音)保持可见用于截图
+                if p.get("platform") == "twitch":
+                    self.obs.set_visibility(p_src, False)
 
             # 2. 显示并取消静音当前源
             self.obs.set_visibility(src_name, True)
             self.obs.set_mute(src_name, False)
 
-            # 3. 主动触发播放 (解决 always_play 不生效)
-            self.obs.trigger_media_play(src_name)
+            # 3. 主动触发播放 (仅 VLC 源需要, 浏览器源不需要)
+            if player.get("platform") == "twitch":
+                self.obs.trigger_media_play(src_name)
 
             log("系统", f"[切换-完成] 视角至 {player['name']}")
             self.current_log_player.set(player["name"])
@@ -2515,37 +2628,47 @@ class ManagerApp:
             log("系统", f"[切换-异常] {player['name']}: {e}")
 
     def refresh_player(self, player):
-        """刷新选手推流: 重启推流管线 + 重启OBS VLC源 + 重连监视器VLC
-        三平台通用，不再仅限 Twitch"""
+        """刷新选手:
+        - Twitch: 重启推流管线 + 重启VLC源 + 重连监视器VLC
+        - B站/抖音: 刷新浏览器源(重新加载页面)
+        """
         if not player.get("active"):
             self.activate_player(player)
             return
         name = player["name"]
-        log("系统", f"[刷新-开始] {name} 平台={player['platform']}")
+        plat = player.get("platform")
+        log("系统", f"[刷新-开始] {name} 平台={plat}")
         def do_refresh():
             try:
-                # 1. 停止并重启推流管线
-                stop_stream(player)
-                time.sleep(1)
-                if not start_stream(player, self.obs):
-                    log("系统", f"[刷新-推流失败] {name}")
-                    self.root.after(0, lambda: messagebox.showwarning("刷新", f"{name} 推流重启失败"))
-                    return
-                # 2. 重启 OBS VLC 源播放
-                src_name = player.get("obs_source_name")
-                if src_name and self.obs and self.obs.connected:
-                    self.obs.trigger_media_restart(src_name)
-                # 3. 重连监视器 VLC 实例
-                if self.monitor_window and not self.monitor_window._closed:
-                    if name in self.monitor_window.vlc_instances:
-                        try:
-                            _, mp, canvas = self.monitor_window.vlc_instances[name]
-                            mp.stop()
-                            time.sleep(0.5)
-                            mp.play()
-                            log("系统", f"[刷新-监视器VLC重连] {name}")
-                        except Exception as e:
-                            log("系统", f"[刷新-监视器VLC异常] {name}: {e}")
+                if plat == "twitch":
+                    # Twitch: 重启推流 + VLC
+                    stop_stream(player)
+                    time.sleep(1)
+                    if not start_stream(player, self.obs):
+                        log("系统", f"[刷新-推流失败] {name}")
+                        self.root.after(0, lambda: messagebox.showwarning("刷新", f"{name} 推流重启失败"))
+                        return
+                    src_name = player.get("obs_source_name")
+                    if src_name and self.obs and self.obs.connected:
+                        self.obs.trigger_media_restart(src_name)
+                    # 重连监视器 VLC 实例
+                    if self.monitor_window and not self.monitor_window._closed:
+                        if name in self.monitor_window.vlc_instances:
+                            try:
+                                _, mp, canvas = self.monitor_window.vlc_instances[name]
+                                mp.stop()
+                                time.sleep(0.5)
+                                mp.play()
+                                log("系统", f"[刷新-监视器VLC重连] {name}")
+                            except Exception as e:
+                                log("系统", f"[刷新-监视器VLC异常] {name}: {e}")
+                else:
+                    # B站/抖音: 刷新浏览器源 (重新设置 URL 触发重载)
+                    src_name = player.get("obs_source_name")
+                    url = player.get("url", "")
+                    if src_name and url and self.obs and self.obs.connected:
+                        self.obs.refresh_browser_source(src_name, url)
+                        log("系统", f"[刷新-浏览器源] {name} 重新加载: {url}")
                 log("系统", f"[刷新-完成] {name}")
                 self.root.after(0, self.refresh_ui)
             except Exception as e:
@@ -2570,23 +2693,39 @@ class ManagerApp:
     def sync_player(self, player):
         if not self.obs or not self.obs.connected:
             return
-        # 统一所有平台: 创建 VLC 源读取 RTMP 流
-        # URL 由 streamlink 解析网页链接获得，OBS VLC 源读取本地 RTMP 流
         desired = f"{player['name']}_{player['view_label']}_{player['hotkey']}"
-        rtmp_url = f"rtmp://localhost:1935/live/{player['stream_name']}"
         old = player.get("obs_source_name")
-        if old and self.obs.source_exists(old):
-            if old != desired:
-                if self.obs.source_exists(desired):
-                    self.obs.remove_source(desired)
-                if not self.obs.rename_source(old, desired):
-                    self.obs.remove_source(old)
-                    self.obs.create_vlc(desired, rtmp_url)
-        elif not self.obs.source_exists(desired):
-            log("系统", f"[sync_player] 创建 VLC 源: {desired}")
-            self.obs.create_vlc(desired, rtmp_url)
+        plat = player.get("platform")
+
+        if plat == "twitch":
+            # Twitch: VLC 源读取本地 RTMP 流 (streamlink 推流)
+            rtmp_url = f"rtmp://localhost:1935/live/{player['stream_name']}"
+            if old and self.obs.source_exists(old):
+                if old != desired:
+                    if self.obs.source_exists(desired):
+                        self.obs.remove_source(desired)
+                    if not self.obs.rename_source(old, desired):
+                        self.obs.remove_source(old)
+                        self.obs.create_vlc(desired, rtmp_url)
+            elif not self.obs.source_exists(desired):
+                log("系统", f"[sync_player] 创建 VLC 源: {desired}")
+                self.obs.create_vlc(desired, rtmp_url)
+        else:
+            # B站/抖音: 浏览器源直接加载网页 (保持可见用于截图, 无需推流)
+            url = player.get("url", "")
+            if old and self.obs.source_exists(old):
+                if old != desired:
+                    if self.obs.source_exists(desired):
+                        self.obs.remove_source(desired)
+                    if not self.obs.rename_source(old, desired):
+                        self.obs.remove_source(old)
+                        self.obs.create_browser_source(desired, url)
+            elif not self.obs.source_exists(desired):
+                log("系统", f"[sync_player] 创建浏览器源: {desired}")
+                self.obs.create_browser_source(desired, url)
+
         player["obs_source_name"] = desired
-        log("系统", f"sync_player 完成: {player['name']} -> {desired} (VLC源)")
+        log("系统", f"sync_player 完成: {player['name']} -> {desired} ({'VLC源' if plat == 'twitch' else '浏览器源'})")
 
     def _cleanup_edge_profiles(self):
         profiles_dir = os.path.join(BASE_DIR, "edge_profiles")
