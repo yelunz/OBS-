@@ -18,9 +18,6 @@
             "view_label": 1,
             "stream_name": "player1",
             "obs_source_name": "meuyou1_1_1",
-            "active": true,
-            "source_ok": true,
-            "stream_pid": null,
             "window_title": "OBS_Window_meuyou1"
         },
         {
@@ -35,10 +32,7 @@
             "browser_url": "",
             "view_label": 2,
             "stream_name": "player2",
-            "obs_source_name": "lyasyaa_2_2",
-            "active": false,
-            "source_ok": true,
-            "stream_pid": null,
+            "obs_source_name": "",
             "window_title": "OBS_Window_lyasyaa"
         },
         {
@@ -53,10 +47,7 @@
             "browser_url": "",
             "view_label": 3,
             "stream_name": "player3",
-            "obs_source_name": "emi_mge7_3_3",
-            "active": false,
-            "source_ok": true,
-            "stream_pid": null,
+            "obs_source_name": "",
             "window_title": "OBS_Window_emi_mge7"
         },
         {
@@ -71,10 +62,7 @@
             "browser_url": "",
             "view_label": 4,
             "stream_name": "player4",
-            "obs_source_name": "happycheftv_4_4",
-            "active": false,
-            "source_ok": false,
-            "stream_pid": null,
+            "obs_source_name": "",
             "window_title": "OBS_Window_happycheftv"
         },
         {
@@ -89,10 +77,7 @@
             "browser_url": "",
             "view_label": 5,
             "stream_name": "player5",
-            "obs_source_name": "ghostiexuwu_5_5",
-            "active": false,
-            "source_ok": false,
-            "stream_pid": null,
+            "obs_source_name": "",
             "window_title": "OBS_Window_ghostiexuwu"
         },
         {
@@ -108,9 +93,6 @@
             "view_label": 6,
             "stream_name": "player6",
             "obs_source_name": "seoi1016_6_6",
-            "active": true,
-            "source_ok": false,
-            "stream_pid": 20924,
             "window_title": "OBS_Window_seoi1016"
         },
         {
@@ -126,9 +108,6 @@
             "view_label": 7,
             "stream_name": "player7",
             "obs_source_name": "951_7_7",
-            "active": false,
-            "source_ok": null,
-            "stream_pid": null,
             "window_title": "OBS_Window_951"
         },
         {
@@ -144,9 +123,6 @@
             "view_label": 8,
             "stream_name": "player8",
             "obs_source_name": "甜药_8_8",
-            "active": false,
-            "source_ok": null,
-            "stream_pid": null,
             "window_title": "OBS_Window_甜药"
         },
         {
@@ -161,10 +137,7 @@
             "browser_url": "",
             "view_label": 9,
             "stream_name": "player9",
-            "obs_source_name": "imperialhal___9_9",
-            "active": false,
-            "source_ok": false,
-            "stream_pid": null,
+            "obs_source_name": "",
             "window_title": "OBS_Window_imperialhal__"
         },
         {
@@ -179,10 +152,7 @@
             "browser_url": "",
             "view_label": 10,
             "stream_name": "player10",
-            "obs_source_name": "aceu_10_a",
-            "active": false,
-            "source_ok": false,
-            "stream_pid": null,
+            "obs_source_name": "",
             "window_title": "OBS_Window_aceu"
         },
         {
@@ -197,10 +167,7 @@
             "browser_url": "",
             "view_label": 11,
             "stream_name": "player11",
-            "obs_source_name": "extesyy_11_b",
-            "active": false,
-            "source_ok": false,
-            "stream_pid": null,
+            "obs_source_name": "",
             "window_title": "OBS_Window_extesyy"
         },
         {
@@ -216,9 +183,6 @@
             "view_label": 12,
             "stream_name": "player12",
             "obs_source_name": "woojungx4_12_c",
-            "active": false,
-            "source_ok": true,
-            "stream_pid": null,
             "window_title": "OBS_Window_woojungx4"
         },
         {
@@ -233,10 +197,7 @@
             "browser_url": "",
             "view_label": 13,
             "stream_name": "player13",
-            "obs_source_name": "irissiri129_13_d",
-            "active": false,
-            "source_ok": true,
-            "stream_pid": null,
+            "obs_source_name": "",
             "window_title": "OBS_Window_irissiri129"
         },
         {
@@ -251,10 +212,7 @@
             "browser_url": "https://live.bilibili.com/30778440",
             "view_label": 14,
             "stream_name": "player14",
-            "obs_source_name": "猫猫_14_e",
-            "active": false,
-            "source_ok": null,
-            "stream_pid": null,
+            "obs_source_name": "",
             "window_title": "OBS_Window_猫猫"
         },
         {
@@ -270,9 +228,6 @@
             "view_label": 15,
             "stream_name": "player15",
             "obs_source_name": "",
-            "active": false,
-            "source_ok": null,
-            "stream_pid": null,
             "window_title": "OBS_Window_自定义网页"
         },
         {
@@ -288,9 +243,6 @@
             "view_label": 16,
             "stream_name": "player17",
             "obs_source_name": "抖音测试_16_f",
-            "active": false,
-            "source_ok": null,
-            "stream_pid": null,
             "window_title": "OBS_Window_抖音测试"
         },
         {
@@ -305,11 +257,38 @@
             "browser_url": "https://live.bilibili.com/2652387",
             "view_label": 17,
             "stream_name": "player18",
-            "obs_source_name": "刘_17_g",
-            "active": false,
-            "source_ok": null,
-            "stream_pid": null,
+            "obs_source_name": "",
             "window_title": "OBS_Window_刘"
+        },
+        {
+            "id": 19,
+            "name": "B站870004",
+            "hotkey": "h",
+            "platform": "bilibili",
+            "room_id": "870004",
+            "twitch_url": "",
+            "douyin_url": "",
+            "quality": "best",
+            "browser_url": "https://live.bilibili.com/870004",
+            "view_label": 18,
+            "stream_name": "player19",
+            "obs_source_name": "B站870004_18_h",
+            "window_title": "OBS_Window_B站870004"
+        },
+        {
+            "id": 20,
+            "name": "抖音选手",
+            "hotkey": "i",
+            "platform": "douyin",
+            "room_id": "",
+            "twitch_url": "",
+            "douyin_url": "https://live.douyin.com/230977032951?from_search=true&is_aweme_tied=1&search_id=202607140426345BC67C6DCB2DC258D114&search_result_id=7662012682010185012",
+            "quality": "best",
+            "browser_url": "https://live.douyin.com/230977032951?from_search=true&is_aweme_tied=1&search_id=202607140426345BC67C6DCB2DC258D114&search_result_id=7662012682010185012",
+            "view_label": 19,
+            "stream_name": "player20",
+            "obs_source_name": "抖音选手_19_i",
+            "window_title": "OBS_Window_抖音选手"
         }
     ],
     "scene_name": "多视角切换"

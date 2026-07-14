@@ -941,10 +941,6 @@ class MonitorWindow:
         self.container.pack(fill=tk.BOTH, expand=True)
         self.empty_label = ctk.CTkLabel(self.container, text="暂无推流", font=FONT_TITLE, text_color=TEXT_SECONDARY)
         self.win.bind("<Configure>", self._on_resize)
-        # 全局点击绑定: VLC 子窗口覆盖 canvas 后会拦截 <Button-1>,
-        # 但事件仍会冒泡到顶层 win (VLC 子窗口是 win 的后代),
-        # 通过坐标判断点击了哪个网格实现切换
-        self.win.bind("<Button-1>", self._on_global_click)
         self.after_id = None
         self._refresh_loop_id = None
         self._tk_widgets = []  # 需要主题更新的 tk 原生控件
@@ -953,31 +949,6 @@ class MonitorWindow:
         self.refresh()
         # 启动周期性刷新循环：每3秒检测新增/消失的活跃选手
         self._start_refresh_loop()
-
-    def _on_global_click(self, event):
-        """全局点击处理: 通过坐标判断点击了哪个网格
-        VLC 嵌入后子窗口拦截 canvas 事件, 但点击事件会冒泡到 win"""
-        if self._closed or not self.players:
-            return
-        try:
-            # 获取容器相对于屏幕的坐标
-            cont_x = self.container.winfo_rootx()
-            cont_y = self.container.winfo_rooty()
-            rel_x = event.x_root - cont_x
-            rel_y = event.y_root - cont_y
-            cols = self.columns
-            if cols <= 0:
-                return
-            for idx, player in enumerate(self.players):
-                row = idx // cols
-                col = idx % cols
-                x0 = 10 + col * self.cell_width
-                y0 = 10 + row * self.cell_height
-                if x0 <= rel_x <= x0 + self.cell_width and y0 <= rel_y <= y0 + self.cell_height:
-                    self.app.switch_to(player)
-                    break
-        except Exception:
-            pass
 
     def apply_theme(self):
         """主题切换时更新所有 tk 原生控件的颜色"""
@@ -1167,7 +1138,6 @@ class MonitorWindow:
                 return
             try:
                 self.refresh()
-                self._check_vlc_health()
             except Exception:
                 pass
             if not self._closed:
@@ -1294,8 +1264,6 @@ class MonitorWindow:
         canvas.place(x=0, y=0, width=100, height=75)
         name_label.place(x=0, y=75, width=100, height=25)
         # 点击绑定：点击网格任意区域切换视角
-        # 同时绑定 frame/canvas/name_label，确保 VLC 子窗口穿透后
-        # 或点击标签区域都能触发
         click_handler = lambda e, p=player: self.app.switch_to(p)
         frame.bind("<Button-1>", click_handler)
         canvas.bind("<Button-1>", click_handler)
@@ -1303,29 +1271,17 @@ class MonitorWindow:
         self.grid_widgets[name] = (frame, canvas, name_label)
         log("系统", f"[监视器-显示-步骤2] 创建网格: {name}")
 
-        if plat == "twitch":
-            # Twitch: VLC 播放已有 RTMP 流
-            if name not in self.vlc_instances:
-                default_sn = f"player{player['id']}"
-                stream_name = player.get("stream_name", default_sn)
-                rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
-                self.win.after(2000, self._start_vlc, name, canvas, rtmp_url)
-                log("系统", f"[监视器-显示-Twitch] 安排 VLC 启动: {name} -> {rtmp_url}")
-
-        elif plat == "bilibili":
-            # B站: streamlink + ffmpeg → RTMP → VLC
-            if name not in self.vlc_instances:
-                self._start_bilibili_pipeline(name, canvas)
-                log("系统", f"[监视器-显示-B站] 启动 streamlink 管线: {name}")
-
-        elif plat in ("douyin", "custom_web"):
-            # 抖音/自定义网页: OBS 截图轮询
-            if PIL_AVAILABLE:
-                self._start_screenshot_monitor(name, canvas)
-                log("系统", f"[监视器-显示-截图] 启动截图轮询: {name}")
-            else:
-                log("系统", f"[监视器-显示-截图-失败] Pillow 未安装，无法截图预览: {name}")
-                canvas.create_text(150, 100, text="Pillow 未安装", fill="gray", font=FONT_SMALL)
+        # 统一所有平台使用 OBS 截图轮询预览
+        # 不再使用 VLC 嵌入 canvas: VLC 创建的 Win32 原生子窗口会吞掉鼠标事件,
+        # 导致 Tk 的 <Button-1> 绑定无法触发 (点击无法跳转的根因)
+        # 所有平台在 OBS 中均有源 (Twitch=VLC源, B站=浏览器源, 抖音=浏览器源),
+        # GetSourceScreenshot 可对任何源截图
+        if PIL_AVAILABLE:
+            self._start_screenshot_monitor(name, canvas)
+            log("系统", f"[监视器-显示-截图] 启动截图轮询: {name}")
+        else:
+            log("系统", f"[监视器-显示-截图-失败] Pillow 未安装: {name}")
+            canvas.create_text(150, 100, text="Pillow 未安装", fill="gray", font=FONT_SMALL)
 
     def _hide_grid(self, name):
         """隐藏并销毁指定视角的网格 (移除 paused_players 机制，直接销毁避免状态不一致)"""
@@ -1554,6 +1510,8 @@ class MonitorWindow:
         """截图轮询线程: 持续调用 GetSourceScreenshot，存储最新帧"""
         log("系统", f"[监视器-截图-线程] 线程启动: {name}")
         fail_count = 0
+        success_count = 0
+        src_name_logged = False
         while self.screenshot_running.get(name, False) and self.win.winfo_exists():
             try:
                 obs = self.app.obs
@@ -1568,8 +1526,15 @@ class MonitorWindow:
                     continue
                 src_name = player.get("obs_source_name", "")
                 if not src_name:
+                    if fail_count % 10 == 0:
+                        log("系统", f"[监视器-截图-线程] {name} obs_source_name 为空，等待 sync_player 完成")
+                    fail_count += 1
                     time.sleep(0.5)
                     continue
+
+                if not src_name_logged:
+                    log("系统", f"[监视器-截图-线程] {name} 使用源名: {src_name}")
+                    src_name_logged = True
 
                 # 调用截图 API (480x270, JPEG 质量 50)
                 img_b64 = obs.get_source_screenshot(src_name, 480, 270, 50)
@@ -1580,20 +1545,23 @@ class MonitorWindow:
                     img_bytes = base64.b64decode(img_b64)
                     with self.screenshot_lock:
                         self.screenshot_frames[name] = img_bytes
+                    if success_count == 0:
+                        log("系统", f"[监视器-截图-线程] {name} 首帧成功 ({len(img_bytes)} bytes)")
+                    success_count += 1
                     fail_count = 0
                 else:
                     fail_count += 1
-                    if fail_count == 1:
-                        log("系统", f"[监视器-截图-线程] {name} 截图返回空 (源可能尚未就绪)")
+                    if fail_count == 1 or fail_count % 30 == 0:
+                        log("系统", f"[监视器-截图-线程] {name} 截图返回空 (已失败{fail_count}次, 源={src_name})")
             except Exception as e:
                 fail_count += 1
-                if fail_count == 1:
-                    log("系统", f"[监视器-截图-线程] {name} 截图异常: {e}")
+                if fail_count == 1 or fail_count % 30 == 0:
+                    log("系统", f"[监视器-截图-线程] {name} 截图异常 (已失败{fail_count}次): {e}")
 
             # 约 10fps (100ms) - 降低轮询频率以减少 OBS WebSocket 压力
             time.sleep(0.1)
 
-        log("系统", f"[监视器-截图-线程] 线程退出: {name}")
+        log("系统", f"[监视器-截图-线程] 线程退出: {name} (成功{success_count}帧, 失败{fail_count}次)")
 
     def _ensure_screenshot_render_loop(self):
         """确保截图渲染循环在运行"""
@@ -1929,9 +1897,9 @@ class ManagerApp:
             return
         sorted_p = sorted(self.players, key=lambda p: (isinstance(p["view_label"], int), p["view_label"] if isinstance(p["view_label"], int) else 9999))
         for idx, p in enumerate(sorted_p, start=1):
-            if p["view_label"] != idx:
-                p["view_label"] = idx
-                p["obs_source_name"] = f"{p['name']}_{idx}_{p['hotkey']}"
+            p["view_label"] = idx
+            # 始终设置 obs_source_name，确保截图线程和 switcher.py 能匹配源
+            p["obs_source_name"] = f"{p['name']}_{idx}_{p['hotkey']}"
 
     def async_connect_obs(self):
         def _connect():
