@@ -1372,24 +1372,62 @@ class MonitorWindow:
         if name in self.grid_widgets:
             return
 
-        # 使用 tk.Frame 替代 ttk.Frame，消除白边框
+        # 卡片式布局: 顶部名字栏 + 中间视频区 + 底部控制栏
         frame = tk.Frame(self.container, bg=BORDER, highlightthickness=1, highlightbackground=BORDER)
+        # 顶部栏: 选手名 + 平台
+        top_bar = tk.Label(frame, text=f"  {name}  [{plat}]", bg=ELEVATED_BG, fg=TEXT_PRIMARY,
+                           font=FONT_SMALL, highlightthickness=0, anchor="w")
+        # 中间: 视频画面 canvas
         canvas = tk.Canvas(frame, bg=PAGE_BG, highlightthickness=0)
-        name_label = tk.Label(frame, text=name, bg=ELEVATED_BG, fg=TEXT_PRIMARY, font=FONT_SMALL, highlightthickness=0)
+        # 底部控制栏: − [百分比] + [静音]
+        bottom_bar = tk.Frame(frame, bg=ELEVATED_BG, highlightthickness=0)
+        btn_minus = tk.Label(bottom_bar, text="  −  ", bg=ELEVATED_BG, fg=TEXT_PRIMARY,
+                             font=FONT_BODY_BOLD, highlightthickness=0, cursor="hand2")
+        vol_label = tk.Label(bottom_bar, text="50%", bg=ELEVATED_BG, fg=TEXT_SECONDARY,
+                             font=FONT_SMALL, highlightthickness=0, width=5)
+        btn_plus = tk.Label(bottom_bar, text="  +  ", bg=ELEVATED_BG, fg=TEXT_PRIMARY,
+                            font=FONT_BODY_BOLD, highlightthickness=0, cursor="hand2")
+        btn_mute = tk.Label(bottom_bar, text=" 🔊 ", bg=ELEVATED_BG, fg=TEXT_SECONDARY,
+                            font=FONT_SMALL, highlightthickness=0, cursor="hand2")
+        btn_minus.pack(side=tk.LEFT, padx=(4, 0))
+        vol_label.pack(side=tk.LEFT, padx=2)
+        btn_plus.pack(side=tk.LEFT, padx=(0, 2))
+        btn_mute.pack(side=tk.RIGHT, padx=(0, 4))
+
         # 注册 tk 控件主题更新
         self._tk_widgets.append((canvas, "bg", LIGHT_THEME["PAGE_BG"], DARK_THEME["PAGE_BG"]))
-        self._tk_widgets.append((name_label, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
-        self._tk_widgets.append((name_label, "fg", LIGHT_THEME["TEXT_PRIMARY"], DARK_THEME["TEXT_PRIMARY"]))
+        self._tk_widgets.append((top_bar, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
+        self._tk_widgets.append((top_bar, "fg", LIGHT_THEME["TEXT_PRIMARY"], DARK_THEME["TEXT_PRIMARY"]))
         self._tk_widgets.append((frame, "bg", LIGHT_THEME["BORDER"], DARK_THEME["BORDER"]))
         self._tk_widgets.append((frame, "highlightbackground", LIGHT_THEME["BORDER"], DARK_THEME["BORDER"]))
+        self._tk_widgets.append((bottom_bar, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
+        self._tk_widgets.append((btn_minus, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
+        self._tk_widgets.append((btn_minus, "fg", LIGHT_THEME["TEXT_PRIMARY"], DARK_THEME["TEXT_PRIMARY"]))
+        self._tk_widgets.append((vol_label, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
+        self._tk_widgets.append((vol_label, "fg", LIGHT_THEME["TEXT_SECONDARY"], DARK_THEME["TEXT_SECONDARY"]))
+        self._tk_widgets.append((btn_plus, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
+        self._tk_widgets.append((btn_plus, "fg", LIGHT_THEME["TEXT_PRIMARY"], DARK_THEME["TEXT_PRIMARY"]))
+        self._tk_widgets.append((btn_mute, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
+        self._tk_widgets.append((btn_mute, "fg", LIGHT_THEME["TEXT_SECONDARY"], DARK_THEME["TEXT_SECONDARY"]))
+
         frame.place(x=0, y=0, width=100, height=100)
-        canvas.place(x=0, y=0, width=100, height=75)
-        name_label.place(x=0, y=75, width=100, height=25)
-        # 注意: 不在 canvas/frame/label 上绑定 <Button-1>,
-        # 改由 pynput 全局鼠标钩子统一处理点击跳转 (VLC 嵌入的 Win32 子窗口
-        # 会拦截 Tkinter 事件, pynput 是 OS 级钩子不受影响)
-        self.grid_widgets[name] = (frame, canvas, name_label)
-        log("系统", f"[监视器-显示-步骤2] 创建网格: {name}")
+        top_bar.place(x=0, y=0, width=100, height=22)
+        canvas.place(x=0, y=22, width=100, height=50)
+        bottom_bar.place(x=0, y=72, width=100, height=28)
+
+        # 存储控件引用: (frame, canvas, top_bar, vol_label, btn_mute, btn_minus, btn_plus)
+        self.grid_widgets[name] = (frame, canvas, top_bar, vol_label, btn_mute, btn_minus, btn_plus)
+        log("系统", f"[监视器-显示-步骤2] 创建卡片: {name}")
+
+        # 音量按钮事件绑定
+        btn_minus.bind("<Button-1>", lambda e, n=name: self._on_volume_dec(n, 5))
+        btn_plus.bind("<Button-1>", lambda e, n=name: self._on_volume_inc(n, 5))
+        btn_mute.bind("<Button-1>", lambda e, n=name: self._on_mute_toggle(n))
+        # 长按连续调节
+        btn_minus.bind("<ButtonPress-1>", lambda e, n=name: self._start_repeat(n, -5))
+        btn_plus.bind("<ButtonPress-1>", lambda e, n=name: self._start_repeat(n, 5))
+        btn_minus.bind("<ButtonRelease-1>", lambda e: self._stop_repeat())
+        btn_plus.bind("<ButtonRelease-1>", lambda e: self._stop_repeat())
 
         if plat == "twitch":
             # Twitch: VLC 嵌入 canvas 播放 RTMP 流 (高帧率)
