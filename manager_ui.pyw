@@ -2537,9 +2537,8 @@ class ManagerApp:
                     log("系统", f"推流启动失败: {player['name']}")
             else:
                 log("系统", f"推流启动成功: {player['name']}")
-                # 启动推流进程监控 (仅 Twitch/抖音 需要，浏览器源平台无需)
-                if player["platform"] in ("twitch", "douyin"):
-                    threading.Thread(target=_stream_process_monitor, args=(player, self.obs), daemon=True).start()
+                # 启动推流进程监控 (所有平台都用 streamlink 推流，都需要监控)
+                threading.Thread(target=_stream_process_monitor, args=(player, self.obs), daemon=True).start()
             self.root.after(0, self.refresh_ui)
         threading.Thread(target=do_sync_and_start, daemon=True).start()
         # 注意: 不在此处同步调用 refresh_ui，因为 refresh_ui 内部调用
