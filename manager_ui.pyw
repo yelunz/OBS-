@@ -505,6 +505,16 @@ DEFAULT_MAX_STREAMS = 6
 DEFAULT_HOTKEY_MODIFIERS = "alt+shift"
 
 # ==================== 进程管理 ====================
+def _read_streamlink_stderr(proc, name):
+    """读取 streamlink 的 stderr 输出并记录到日志，用于诊断解析失败"""
+    try:
+        for line in iter(proc.stderr.readline, b''):
+            text = line.decode("utf-8", errors="ignore").strip()
+            if text:
+                log(name, f"[streamlink] {text}")
+    except:
+        pass
+
 def read_stream_output(proc, prefix, player_name, obs_ref=None, stream_name=None):
     triggered = False
     def reader():
@@ -620,7 +630,14 @@ def start_stream(player, obs=None):
 
     cmd1 = ["streamlink", url, qual, "--retry-max", "5", "--retry-streams", "5", "-O"]
     cmd2 = [FFMPEG, "-re", "-i", "pipe:0", "-c", "copy", "-f", "flv", rtmp]
-    p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+    p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
+    # 启动 streamlink stderr 读取线程，记录解析错误到日志
+    threading.Thread(target=_read_streamlink_stderr, args=(p1, name), daemon=True).start()
+    # 等待3秒检查 streamlink 是否立即退出（解析失败/直播结束会立即退出）
+    time.sleep(3)
+    if p1.poll() is not None:
+        log("系统", f"[推流-失败] {name} streamlink 解析失败或直播已结束 (平台={plat})")
+        return False
     p2 = subprocess.Popen(cmd2, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
     p1.stdout.close()
     player["stream_pid"] = p2.pid
