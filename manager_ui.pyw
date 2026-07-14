@@ -566,13 +566,15 @@ def read_stream_output(proc, prefix, player_name, obs_ref=None, stream_name=None
     threading.Thread(target=reader, daemon=True).start()
 
 def _stream_process_monitor(player, obs_ref):
-    """监控推流进程：进程退出时自动重启 (最多3次，每次间隔15秒)"""
+    """监控推流进程：进程退出时自动重启
+    抖音流token约30分钟过期，属于正常现象，无限重试
+    其他平台重试3次后停止"""
+    plat = player.get("platform")
+    max_retries = 999999 if plat == "douyin" else 3  # 抖音无限重试
     retry_count = 0
-    max_retries = 3
     while retry_count < max_retries:
         time.sleep(15)
         try:
-            # 检查选手是否仍在活跃池且 active
             if not player.get("active"):
                 log("系统", f"[推流监控] {player['name']} 已关闭，停止监控")
                 return
@@ -583,16 +585,15 @@ def _stream_process_monitor(player, obs_ref):
             if not pid:
                 log("系统", f"[推流监控] {player['name']} 无 stream_pid，停止监控")
                 return
-            # 检查进程是否存活
             try:
                 proc = psutil.Process(pid)
                 if proc.is_running():
-                    continue  # 进程正常，继续监控
+                    continue
             except psutil.NoSuchProcess:
                 pass
-            # 进程已退出 → 尝试重启
             retry_count += 1
-            log("系统", f"[推流监控] {player['name']} 推流进程已退出，第 {retry_count}/{max_retries} 次自动重启...")
+            log_label = f"第 {retry_count} 次" if plat != "douyin" else f"第 {retry_count} 次 (抖音token刷新)"
+            log("系统", f"[推流监控] {player['name']} 推流进程已退出，{log_label} 自动重启...")
             player["stream_pid"] = None
             if not start_stream(player, obs_ref):
                 time.sleep(3)
@@ -629,31 +630,23 @@ def start_stream(player, obs=None):
         start_mediamtx()
     wait_for_mediamtx()
 
-    if plat == "twitch":
-        twitch_input = player.get("twitch_url", "") or player.get("channel", "")
-        if not twitch_input:
-            return False
-        if not twitch_input.startswith("http"):
-            twitch_input = f"https://www.twitch.tv/{twitch_input}"
-        cmd1 = ["streamlink", twitch_input, qual, "--retry-max", "5", "--retry-streams", "5", "-O"]
-        cmd2 = [FFMPEG, "-re", "-i", "pipe:0", "-c", "copy", "-f", "flv", rtmp]
-        p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
-        p2 = subprocess.Popen(cmd2, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
-        p1.stdout.close()
-        player["stream_pid"] = p2.pid
-        read_stream_output(p2, "", name, obs, sn)
-    elif plat == "douyin":
-        du = player.get("douyin_url", "")
-        if not du:
-            return False
-        cmd = [FFMPEG, "-user_agent", "Mozilla/5.0", "-i", du, "-c", "copy", "-f", "flv", rtmp]
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
-        player["stream_pid"] = p.pid
-        read_stream_output(p, "", name, obs, sn)
-    else:
-        # bilibili / custom_web: 使用 OBS 浏览器源，无需 streamlink 管线
-        log("系统", f"[推流-跳过] {name} 平台={plat} 使用 OBS 浏览器源，无需启动推流管线")
-        return True
+    # 统一三平台: streamlink 解析网页链接 → ffmpeg 转封装为 RTMP
+    # Twitch: twitch.tv/频道名 (streamlink 原生支持)
+    # B站: live.bilibili.com/房间号 (streamlink bilibili 插件)
+    # 抖音: live.douyin.com/房间号 (streamlink douyin 插件, 自动处理token)
+    url = player.get("url", "")
+    if not url:
+        log("系统", f"[推流-失败] {name} 无 url 字段")
+        return False
+
+    cmd1 = ["streamlink", url, qual, "--retry-max", "5", "--retry-streams", "5", "-O"]
+    cmd2 = [FFMPEG, "-re", "-i", "pipe:0", "-c", "copy", "-f", "flv", rtmp]
+    p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+    p2 = subprocess.Popen(cmd2, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+    p1.stdout.close()
+    player["stream_pid"] = p2.pid
+    read_stream_output(p2, "", name, obs, sn)
+    log("系统", f"[推流-启动] {name} 平台={plat} URL={url} -> {rtmp}")
 
     return True
 
