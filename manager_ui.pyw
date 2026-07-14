@@ -941,6 +941,10 @@ class MonitorWindow:
         self.container.pack(fill=tk.BOTH, expand=True)
         self.empty_label = ctk.CTkLabel(self.container, text="暂无推流", font=FONT_TITLE, text_color=TEXT_SECONDARY)
         self.win.bind("<Configure>", self._on_resize)
+        # 全局点击绑定: VLC 子窗口覆盖 canvas 后会拦截 <Button-1>,
+        # 但事件仍会冒泡到顶层 win (VLC 子窗口是 win 的后代),
+        # 通过坐标判断点击了哪个网格实现切换
+        self.win.bind("<Button-1>", self._on_global_click)
         self.after_id = None
         self._refresh_loop_id = None
         self._tk_widgets = []  # 需要主题更新的 tk 原生控件
@@ -949,6 +953,31 @@ class MonitorWindow:
         self.refresh()
         # 启动周期性刷新循环：每3秒检测新增/消失的活跃选手
         self._start_refresh_loop()
+
+    def _on_global_click(self, event):
+        """全局点击处理: 通过坐标判断点击了哪个网格
+        VLC 嵌入后子窗口拦截 canvas 事件, 但点击事件会冒泡到 win"""
+        if self._closed or not self.players:
+            return
+        try:
+            # 获取容器相对于屏幕的坐标
+            cont_x = self.container.winfo_rootx()
+            cont_y = self.container.winfo_rooty()
+            rel_x = event.x_root - cont_x
+            rel_y = event.y_root - cont_y
+            cols = self.columns
+            if cols <= 0:
+                return
+            for idx, player in enumerate(self.players):
+                row = idx // cols
+                col = idx % cols
+                x0 = 10 + col * self.cell_width
+                y0 = 10 + row * self.cell_height
+                if x0 <= rel_x <= x0 + self.cell_width and y0 <= rel_y <= y0 + self.cell_height:
+                    self.app.switch_to(player)
+                    break
+        except Exception:
+            pass
 
     def apply_theme(self):
         """主题切换时更新所有 tk 原生控件的颜色"""
@@ -1264,8 +1293,13 @@ class MonitorWindow:
         frame.place(x=0, y=0, width=100, height=100)
         canvas.place(x=0, y=0, width=100, height=75)
         name_label.place(x=0, y=75, width=100, height=25)
-        # 原生点击绑定：点击 canvas 切换视角 (替代 pynput 全局监听器)
-        canvas.bind("<Button-1>", lambda e, p=player: self.app.switch_to(p))
+        # 点击绑定：点击网格任意区域切换视角
+        # 同时绑定 frame/canvas/name_label，确保 VLC 子窗口穿透后
+        # 或点击标签区域都能触发
+        click_handler = lambda e, p=player: self.app.switch_to(p)
+        frame.bind("<Button-1>", click_handler)
+        canvas.bind("<Button-1>", click_handler)
+        name_label.bind("<Button-1>", click_handler)
         self.grid_widgets[name] = (frame, canvas, name_label)
         log("系统", f"[监视器-显示-步骤2] 创建网格: {name}")
 
@@ -1333,7 +1367,7 @@ class MonitorWindow:
         """用 Win32 API 让 VLC 嵌入后创建的子窗口透明点击穿透
         VLC 通过 set_hwnd 嵌入 canvas 后会创建子窗口覆盖在 canvas 上方，
         拦截鼠标事件导致 canvas 的 <Button-1> 绑定无法触发。
-        设置 WS_EX_TRANSPARENT 让鼠标点击穿透到下方的 canvas。"""
+        设置 WS_EX_TRANSPARENT | WS_EX_LAYERED 让鼠标点击穿透到下方的 canvas。"""
         try:
             import ctypes
             user32 = ctypes.windll.user32
@@ -1341,13 +1375,14 @@ class MonitorWindow:
             GW_HWNDNEXT = 2
             GWL_EXSTYLE = -20
             WS_EX_TRANSPARENT = 0x00000020
+            WS_EX_LAYERED = 0x00080000
             hwnd = canvas.winfo_id()
             if not hwnd:
                 return
             child = user32.GetWindow(hwnd, GW_CHILD)
             while child:
                 ex_style = user32.GetWindowLongW(child, GWL_EXSTYLE)
-                user32.SetWindowLongW(child, GWL_EXSTYLE, ex_style | WS_EX_TRANSPARENT)
+                user32.SetWindowLongW(child, GWL_EXSTYLE, ex_style | WS_EX_TRANSPARENT | WS_EX_LAYERED)
                 child = user32.GetWindow(child, GW_HWNDNEXT)
         except Exception:
             pass
@@ -1410,7 +1445,7 @@ class MonitorWindow:
 
     # ==================== B站监视器管线 ====================
     def _start_bilibili_pipeline(self, name, canvas):
-        """启动 B站 streamlink + ffmpeg → RTMP 管线"""
+        """启动 B站 streamlink + ffmpeg → RTMP 管线 (在后台线程执行避免阻塞主线程)"""
         log("系统", f"[监视器-B站-步骤1] 查找选手 {name} 的 URL")
         player = next((p for p in self.app.active_players if p["name"] == name), None)
         if not player:
@@ -1444,32 +1479,38 @@ class MonitorWindow:
         rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
         log("系统", f"[监视器-B站-步骤2] URL={url}, RTMP={rtmp_url}")
 
-        # 确保 MediaMTX 运行（由主程序管理，此处仅检查）
-        global mediamtx_proc
-        if not mediamtx_proc or mediamtx_proc.poll() is not None:
-            log("系统", f"[监视器-B站-步骤3] MediaMTX 未运行，等待主程序启动")
-            wait_for_mediamtx()
-        else:
-            log("系统", f"[监视器-B站-步骤3] MediaMTX 已在运行")
+        # 在后台线程执行 MediaMTX 等待和管线启动，避免阻塞主线程
+        # 主线程阻塞会导致 refresh 无法完成，网格无法显示 (B站不显示黑底的根因)
+        def _do_pipeline():
+            # 确保 MediaMTX 运行（由主程序管理，此处仅检查）
+            global mediamtx_proc
+            if not mediamtx_proc or mediamtx_proc.poll() is not None:
+                log("系统", f"[监视器-B站-步骤3] MediaMTX 未运行，等待主程序启动")
+                wait_for_mediamtx()
+            else:
+                log("系统", f"[监视器-B站-步骤3] MediaMTX 已在运行")
 
-        try:
-            log("系统", f"[监视器-B站-步骤4] 启动 streamlink + ffmpeg 管线")
-            cmd1 = ["streamlink", url, "best", "--retry-max", "5", "--retry-streams", "5", "-O"]
-            cmd2 = [FFMPEG, "-re", "-i", "pipe:0", "-c", "copy", "-f", "flv", rtmp_url]
-            p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
-            p2 = subprocess.Popen(cmd2, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
-            p1.stdout.close()
-            self.bilibili_procs[name] = (p1, p2)
-            log("系统", f"[监视器-B站-步骤5] 管线已启动: {name}")
-        except Exception as e:
-            log("系统", f"[监视器-B站-失败] 启动管线异常: {name} - {e}")
-            return
+            try:
+                log("系统", f"[监视器-B站-步骤4] 启动 streamlink + ffmpeg 管线")
+                cmd1 = ["streamlink", url, "best", "--retry-max", "5", "--retry-streams", "5", "-O"]
+                cmd2 = [FFMPEG, "-re", "-i", "pipe:0", "-c", "copy", "-f", "flv", rtmp_url]
+                p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
+                p2 = subprocess.Popen(cmd2, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+                p1.stdout.close()
+                self.bilibili_procs[name] = (p1, p2)
+                log("系统", f"[监视器-B站-步骤5] 管线已启动: {name}")
+            except Exception as e:
+                log("系统", f"[监视器-B站-失败] 启动管线异常: {name} - {e}")
+                return
 
-        # 延迟启动 VLC（等待管线推流稳定，B站流需要约4-5秒）
-        self.win.after(6000, self._start_vlc, name, canvas, rtmp_url)
-        # 兜底重试：如果流未就绪导致 VLC 连接失败，10秒后重试
-        self.win.after(10000, self._retry_vlc, name, canvas, rtmp_url)
-        log("系统", f"[监视器-B站-步骤6] 安排 VLC 启动 (6s) + 兜底重试 (10s): {name}")
+            # 延迟启动 VLC（等待管线推流稳定，B站流需要约4-5秒）
+            if not self._closed:
+                self.win.after(6000, self._start_vlc, name, canvas, rtmp_url)
+                # 兜底重试：如果流未就绪导致 VLC 连接失败，10秒后重试
+                self.win.after(10000, self._retry_vlc, name, canvas, rtmp_url)
+                log("系统", f"[监视器-B站-步骤6] 安排 VLC 启动 (6s) + 兜底重试 (10s): {name}")
+
+        threading.Thread(target=_do_pipeline, daemon=True).start()
 
     def _stop_bilibili_pipeline(self, name):
         """停止 B站 streamlink 管线"""
