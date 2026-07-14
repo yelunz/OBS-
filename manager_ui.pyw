@@ -428,6 +428,19 @@ class OBSController:
                 sceneItemEnabled=visible
             ))
 
+    def set_source_index(self, name, index):
+        """调整场景项的层级顺序 (index 越大越在上层)"""
+        m = self.get_scene_item_map()
+        if name in m:
+            try:
+                self.ws.call(requests.SetSceneItemIndex(
+                    sceneName=self.scene_name,
+                    sceneItemId=m[name]["id"],
+                    sceneItemIndex=index
+                ))
+            except Exception as e:
+                log("系统", f"[OBS-调整层级失败] {name}: {e}")
+
     def set_mute(self, source_name, mute):
         try:
             self.ws.call(requests.SetInputMute(inputName=source_name, inputMuted=mute))
@@ -949,6 +962,8 @@ class MonitorWindow:
         self.refresh()
         # 启动周期性刷新循环：每3秒检测新增/消失的活跃选手
         self._start_refresh_loop()
+        # 启动 pynput 全局鼠标钩子 (OS级, 绕过VLC子窗口事件拦截, 点击跳转可靠)
+        self._start_mouse_listener()
 
     def apply_theme(self):
         """主题切换时更新所有 tk 原生控件的颜色"""
@@ -958,6 +973,40 @@ class MonitorWindow:
                 widget.configure(**{attr: val})
             except:
                 pass
+
+    def _start_mouse_listener(self):
+        """启动 pynput 全局鼠标钩子，通过坐标命中判定切换视角
+        这是老代码验证可工作的方案: pynput 是 OS 级全局钩子,
+        在 Tkinter 事件分发之前捕获点击, VLC 嵌入的 Win32 子窗口
+        无法拦截, 因此点击跳转始终可靠"""
+        def on_click(x, y, button, pressed):
+            if not pressed or button != mouse.Button.left:
+                return True
+            if self._closed or not self.win or not self.win.winfo_exists():
+                return True
+            try:
+                cont_x = self.container.winfo_rootx()
+                cont_y = self.container.winfo_rooty()
+                rel_x = x - cont_x
+                rel_y = y - cont_y
+                cols = self.columns
+                if cols <= 0:
+                    return True
+                for idx, player in enumerate(self.players):
+                    row = idx // cols
+                    col = idx % cols
+                    x0 = 10 + col * self.cell_width
+                    y0 = 10 + row * self.cell_height
+                    if x0 <= rel_x <= x0 + self.cell_width and y0 <= rel_y <= y0 + self.cell_height:
+                        # 通过 after(0, ...) 线程安全派发到 Tk 主线程
+                        self.app.root.after(0, self.app.switch_to, player)
+                        break
+            except Exception:
+                pass
+            return True
+        self.mouse_listener = mouse.Listener(on_click=on_click)
+        self.mouse_listener.start()
+        log("系统", "[监视器-鼠标钩子] pynput 全局钩子已启动")
 
     def _on_resize(self, event):
         if self._closed:
@@ -1138,6 +1187,7 @@ class MonitorWindow:
                 return
             try:
                 self.refresh()
+                self._check_vlc_health()
             except Exception:
                 pass
             if not self._closed:
@@ -1200,8 +1250,7 @@ class MonitorWindow:
                 if canvas.winfo_exists():
                     mp.set_hwnd(canvas.winfo_id())
                 mp.play()
-                # 重新播放后重新设置点击穿透
-                self.win.after(500, lambda c=canvas: self._make_vlc_clickthrough(c))
+                # pynput 全局钩子处理点击, 无需设置点击穿透
             except Exception as e:
                 log("系统", f"[监视器-VLC健康检查] {name} 异常: {e}")
 
@@ -1263,25 +1312,32 @@ class MonitorWindow:
         frame.place(x=0, y=0, width=100, height=100)
         canvas.place(x=0, y=0, width=100, height=75)
         name_label.place(x=0, y=75, width=100, height=25)
-        # 点击绑定：点击网格任意区域切换视角
-        click_handler = lambda e, p=player: self.app.switch_to(p)
-        frame.bind("<Button-1>", click_handler)
-        canvas.bind("<Button-1>", click_handler)
-        name_label.bind("<Button-1>", click_handler)
+        # 注意: 不在 canvas/frame/label 上绑定 <Button-1>,
+        # 改由 pynput 全局鼠标钩子统一处理点击跳转 (VLC 嵌入的 Win32 子窗口
+        # 会拦截 Tkinter 事件, pynput 是 OS 级钩子不受影响)
         self.grid_widgets[name] = (frame, canvas, name_label)
         log("系统", f"[监视器-显示-步骤2] 创建网格: {name}")
 
-        # 统一所有平台使用 OBS 截图轮询预览
-        # 不再使用 VLC 嵌入 canvas: VLC 创建的 Win32 原生子窗口会吞掉鼠标事件,
-        # 导致 Tk 的 <Button-1> 绑定无法触发 (点击无法跳转的根因)
-        # 所有平台在 OBS 中均有源 (Twitch=VLC源, B站=浏览器源, 抖音=浏览器源),
-        # GetSourceScreenshot 可对任何源截图
-        if PIL_AVAILABLE:
-            self._start_screenshot_monitor(name, canvas)
-            log("系统", f"[监视器-显示-截图] 启动截图轮询: {name}")
-        else:
-            log("系统", f"[监视器-显示-截图-失败] Pillow 未安装: {name}")
-            canvas.create_text(150, 100, text="Pillow 未安装", fill="gray", font=FONT_SMALL)
+        if plat == "twitch":
+            # Twitch: 传统推流读取方法 — VLC 嵌入 canvas 播放 RTMP 流
+            # 帧率与 OBS 中 VLC 源相同 (同一 RTMP 流)
+            if name not in self.vlc_instances:
+                default_sn = f"player{player['id']}"
+                stream_name = player.get("stream_name", default_sn)
+                rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
+                self.win.after(2000, self._start_vlc, name, canvas, rtmp_url)
+                # 6s 后兜底重试 (流未就绪时 VLC 可能连接失败)
+                self.win.after(6000, self._retry_vlc, name, canvas, rtmp_url)
+                log("系统", f"[监视器-显示-Twitch] 安排 VLC 启动: {name} -> {rtmp_url}")
+
+        elif plat in ("bilibili", "douyin", "custom_web"):
+            # B站/抖音/自定义网页: OBS 浏览器源 + 截图轮询预览
+            if PIL_AVAILABLE:
+                self._start_screenshot_monitor(name, canvas)
+                log("系统", f"[监视器-显示-截图] 启动截图轮询: {name}")
+            else:
+                log("系统", f"[监视器-显示-截图-失败] Pillow 未安装: {name}")
+                canvas.create_text(150, 100, text="Pillow 未安装", fill="gray", font=FONT_SMALL)
 
     def _hide_grid(self, name):
         """隐藏并销毁指定视角的网格 (移除 paused_players 机制，直接销毁避免状态不一致)"""
@@ -1369,8 +1425,7 @@ class MonitorWindow:
             mp.set_hwnd(hwnd)
             mp.play()
             self.vlc_instances[name] = (self.vlc_instance, mp, canvas)
-            # 延迟设置点击穿透：VLC 子窗口需要一点时间创建
-            self.win.after(500, lambda: self._make_vlc_clickthrough(canvas))
+            # pynput 全局钩子处理点击, 无需设置 VLC 子窗口点击穿透
         except Exception as e:
             log("系统", f"监视器启动失败 {name}: {e}")
 
@@ -1392,8 +1447,7 @@ class MonitorWindow:
                 mp.set_media(media)
                 mp.set_hwnd(canvas.winfo_id())
                 mp.play()
-                # 重新播放后重新设置点击穿透
-                self.win.after(500, lambda: self._make_vlc_clickthrough(canvas))
+                # pynput 全局钩子处理点击, 无需重新设置点击穿透
             else:
                 log("系统", f"[监视器-VLC重试] {name} 已在播放，无需重试")
         except Exception as e:
@@ -1637,6 +1691,13 @@ class MonitorWindow:
     def on_close(self):
         log("系统", "[监视器-关闭] 开始清理资源")
         self._closed = True  # 标记已关闭，阻止旧回调创建新网格
+        # 停止 pynput 全局鼠标钩子
+        if self.mouse_listener:
+            try:
+                self.mouse_listener.stop()
+            except:
+                pass
+            self.mouse_listener = None
         # 解绑 <Configure> 事件，防止窗口缩放触发旧 MonitorWindow 的 refresh
         try:
             self.win.unbind("<Configure>")
@@ -2629,31 +2690,73 @@ class ManagerApp:
         self.refresh_ui()
 
     def switch_to(self, player):
+        """切换OBS显示视角 — 防抖+异步, 避免快速点击卡死UI
+        pynput 全局钩子通过 after(0, ...) 派发到主线程调用此方法,
+        每次 click 取消上一个定时器, 300ms 静默后才真正执行,
+        确保 WebSocket 调用在后台线程不阻塞 UI"""
         if not self.obs or not self.obs.connected:
             return
-        cur_name = self.get_current_display_name()
-        if cur_name == player["name"]:
+        self._pending_switch = player
+        # 取消上一个待执行的切换 (防抖)
+        if getattr(self, '_switch_after_id', None):
+            try:
+                self.root.after_cancel(self._switch_after_id)
+            except:
+                pass
+        self._switch_after_id = self.root.after(300, self._do_switch)
+
+    def _do_switch(self):
+        """防抖到期后, 在后台线程执行实际切换"""
+        self._switch_after_id = None
+        player = getattr(self, '_pending_switch', None)
+        if not player:
             return
+        threading.Thread(target=self._switch_thread, args=(player,), daemon=True).start()
 
-        src_name = player.get("obs_source_name")
-        if not src_name or not self.obs.source_exists(src_name):
-            log("系统", f"切换失败，源不存在: {src_name}")
-            return
+    def _switch_thread(self, player):
+        """后台线程执行 OBS 切换: WebSocket 调用不阻塞 UI
+        关键: B站/抖音浏览器源不隐藏 (避免截图黑屏), 只调整层级让当前源覆盖在上层"""
+        try:
+            src_name = player.get("obs_source_name")
+            if not src_name:
+                return
+            # 一次获取所有场景项 (避免循环中重复调用 get_scene_item_map)
+            item_map = self.obs.get_scene_item_map()
+            if src_name not in item_map:
+                log("系统", f"[切换-失败] 源不在场景中: {src_name}")
+                return
+            # 如果当前已显示此源, 跳过
+            if item_map.get(src_name, {}).get("enabled", False):
+                # 仍需检查是否其他源叠加在上层
+                pass
 
-        # 静音并隐藏所有其他源（统一处理所有平台）
-        with self.data_lock:
-            for p in self.active_players:
-                if p.get("obs_source_name") and p["obs_source_name"] != src_name:
-                    self.obs.set_mute(p["obs_source_name"], True)
-                    self.obs.set_visibility(p["obs_source_name"], False)
+            with self.data_lock:
+                active_snapshot = list(self.active_players)
 
-        # 显示并取消静音目标源
-        self.obs.set_visibility(src_name, True)
-        self.obs.set_mute(src_name, False)
-        log("系统", f"切换视角至 {player['name']}")
+            # 1. 静音并处理其他源
+            for p in active_snapshot:
+                p_src = p.get("obs_source_name")
+                if not p_src or p_src == src_name or p_src not in item_map:
+                    continue
+                self.obs.set_mute(p_src, True)
+                if p["platform"] == "twitch":
+                    # Twitch VLC源: 隐藏 (监视器用VLC嵌入, 不依赖截图)
+                    self.obs.set_visibility(p_src, False)
+                # B站/抖音/自定义网页: 不隐藏! 保持渲染供截图, 通过层级覆盖
 
-        self.current_log_player.set(player["name"])
-        self.root.after(1, self.refresh_ui)
+            # 2. 显示并取消静音当前源
+            self.obs.set_visibility(src_name, True)
+            self.obs.set_mute(src_name, False)
+
+            # 3. 把当前源提到最上层 (覆盖其他未隐藏的浏览器源, 解决OBS叠加问题)
+            max_index = len(item_map)
+            self.obs.set_source_index(src_name, max_index)
+
+            log("系统", f"[切换-完成] 视角至 {player['name']}")
+            self.current_log_player.set(player["name"])
+            self.root.after(1, self.refresh_ui)
+        except Exception as e:
+            log("系统", f"[切换-异常] {player['name']}: {e}")
 
     def refresh_player(self, player):
         if player["platform"] not in ("twitch",):
