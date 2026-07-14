@@ -504,6 +504,28 @@ class OBSController:
         except:
             pass
 
+    def get_volume(self, source_name):
+        """获取源音量百分比 (0-100), 失败返回 None"""
+        try:
+            resp = self.ws.call(requests.GetInputVolume(inputName=source_name))
+            mul = resp.getInputVolumeMul()
+            if mul is None:
+                return None
+            return int(round(float(mul) * 100))
+        except Exception:
+            return None
+
+    def set_volume(self, source_name, volume_percent):
+        """设置源音量 (0-100 百分比)"""
+        try:
+            vol = max(0, min(100, int(volume_percent)))
+            self.ws.call(requests.SetInputVolume(
+                inputName=source_name,
+                inputVolumeMul=vol / 100.0
+            ))
+        except Exception as e:
+            log("系统", f"[设置音量失败] {source_name}: {e}")
+
     def rename_source(self, old_name, new_name):
         try:
             self.ws.call(requests.SetInputName(inputName=old_name, newInputName=new_name))
