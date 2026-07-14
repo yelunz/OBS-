@@ -1365,9 +1365,9 @@ class MonitorWindow:
             card_h = cell_h - gap
             frame, canvas, top_bar, vol_label, btn_minus, btn_plus = self.grid_widgets[name]
             frame.place(x=x, y=y, width=card_w, height=card_h)
-            # 卡片式布局: top_bar(24) + canvas(中间) + bottom_bar(38)
+            # 卡片式布局: top_bar(24) + canvas(中间) + bottom_bar(32)
             top_h = 24
-            bottom_h = 38
+            bottom_h = 32
             canvas_h = max(20, card_h - top_h - bottom_h)  # 保护: canvas 至少20px
             top_bar.place(x=0, y=0, width=card_w, height=top_h)
             canvas.place(x=0, y=top_h, width=card_w, height=canvas_h)
@@ -1395,19 +1395,19 @@ class MonitorWindow:
                            font=FONT_BODY_BOLD, highlightthickness=0, anchor="w", pady=2)
         # 中间: 视频画面 canvas (黑色背景模拟播放器)
         canvas = tk.Canvas(frame, bg="#000000", highlightthickness=0)
-        # 底部控制栏: [−] [百分比] [+] (按钮式样式, 居中布局)
+        # 底部控制栏: [◀] [百分比] [▶] (左右箭头调节音量, 视觉对称无基线偏移)
         bottom_bar = tk.Frame(frame, bg=ELEVATED_BG, highlightthickness=0)
-        # 按钮: 25pt bold, pady (0,2) 上移2px补偿字符基线偏下
-        btn_font = (FONT_FAMILY, 25, "bold")
-        btn_minus = tk.Label(bottom_bar, text="  −  ", bg=BORDER, fg=TEXT_PRIMARY,
+        # 箭头按钮: 18pt (◀▶ 几何字符视觉足够大, 无需过大字号)
+        btn_font = (FONT_FAMILY, 18, "bold")
+        btn_minus = tk.Label(bottom_bar, text="  ◀  ", bg=BORDER, fg=TEXT_PRIMARY,
                              font=btn_font, highlightthickness=0, cursor="hand2",
-                             padx=12, pady=(0, 2))
+                             padx=10, pady=0)
         vol_label = tk.Label(bottom_bar, text="50%", bg=ELEVATED_BG, fg=TEXT_SECONDARY,
                              font=FONT_BODY_BOLD, highlightthickness=0, width=7)
-        btn_plus = tk.Label(bottom_bar, text="  +  ", bg=BORDER, fg=TEXT_PRIMARY,
+        btn_plus = tk.Label(bottom_bar, text="  ▶  ", bg=BORDER, fg=TEXT_PRIMARY,
                             font=btn_font, highlightthickness=0, cursor="hand2",
-                            padx=12, pady=(0, 2))
-        # 居中布局: 两侧弹性间距 + [− 百分比 +]
+                            padx=10, pady=0)
+        # 居中布局: 两侧弹性间距 + [◀ 百分比 ▶]
         tk.Label(bottom_bar, bg=ELEVATED_BG, highlightthickness=0).pack(side=tk.LEFT, fill=tk.X, expand=True)
         btn_minus.pack(side=tk.LEFT, padx=(0, 6))
         vol_label.pack(side=tk.LEFT, padx=6)
