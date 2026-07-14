@@ -1215,8 +1215,8 @@ class MonitorWindow:
         # 收集需要销毁的 Tk frame (必须在主线程执行)
         frames_to_destroy = []
         for name in list(self.grid_widgets.keys()):
-            frame, canvas, label = self.grid_widgets.pop(name)
-            frames_to_destroy.append(frame)
+            entry = self.grid_widgets.pop(name)
+            frames_to_destroy.append(entry[0])
         # 清空 paused_players (历史遗留)
         paused_to_release = []
         for name in list(self.paused_players.keys()):
@@ -1336,7 +1336,7 @@ class MonitorWindow:
         # 容器未就绪 (cols=0)：隐藏所有网格，安排延迟重试
         if cols == 0:
             for name in list(self.grid_widgets.keys()):
-                frame, _, _ = self.grid_widgets[name]
+                frame = self.grid_widgets[name][0]
                 try:
                     frame.place_forget()
                 except:
@@ -1359,11 +1359,23 @@ class MonitorWindow:
             col = idx % cols
             x = 10 + col * cell_w
             y = 10 + row * cell_h
-            frame, canvas, label = self.grid_widgets[name]
+            frame, canvas, top_bar, vol_label, btn_mute, btn_minus, btn_plus = self.grid_widgets[name]
             frame.place(x=x, y=y, width=cell_w, height=cell_h)
-            label_height = 25
-            canvas.place(x=0, y=0, width=cell_w, height=cell_h - label_height)
-            label.place(x=0, y=cell_h - label_height, width=cell_w, height=label_height)
+            # 卡片式布局: top_bar(22) + canvas(中间) + bottom_bar(28)
+            top_h = 22
+            bottom_h = 28
+            canvas_h = cell_h - top_h - bottom_h
+            top_bar.place(x=0, y=0, width=cell_w, height=top_h)
+            canvas.place(x=0, y=top_h, width=cell_w, height=canvas_h)
+            # bottom_bar 是 frame 的子控件，已在 _show_grid 中 pack，只需定位 frame 本身
+            # 但 bottom_bar 需要重新 place 以适应 cell 宽度
+            # 实际上 bottom_bar 已 pack 到 frame 中，frame 缩放会自动调整
+            # 但为确保正确显示，显式 place
+            try:
+                bottom_bar = btn_mute.master  # bottom_bar 是 btn_mute 的父容器
+                bottom_bar.place(x=0, y=top_h + canvas_h, width=cell_w, height=bottom_h)
+            except Exception:
+                pass
 
     def _show_grid(self, player):
         name = player["name"]
@@ -1593,7 +1605,7 @@ class MonitorWindow:
         """隐藏并销毁指定视角的网格 (移除 paused_players 机制，直接销毁避免状态不一致)"""
         if name not in self.grid_widgets:
             return
-        frame, canvas, label = self.grid_widgets.pop(name)
+        frame = self.grid_widgets.pop(name)[0]
         log("系统", f"[监视器-隐藏] 销毁网格: {name}")
 
         # 停止截图轮询
@@ -1702,7 +1714,7 @@ class MonitorWindow:
             log("系统", f"[监视器-VLC] {name} 已不在网格中，取消 VLC 启动")
             return
         try:
-            _, current_canvas, _ = self.grid_widgets[name]
+            _, current_canvas, _, _, _, _, _ = self.grid_widgets[name]
             if current_canvas is not canvas:
                 log("系统", f"[监视器-VLC] {name} canvas 已更换，取消旧 VLC 启动")
                 return
@@ -1770,7 +1782,7 @@ class MonitorWindow:
         log("系统", "[监视器-刷新所有] 开始 (子线程清理)")
         # 立即隐藏所有网格，避免清理过程中残留画面闪烁
         for name in list(self.grid_widgets.keys()):
-            frame, _, _ = self.grid_widgets[name]
+            frame = self.grid_widgets[name][0]
             try:
                 frame.place_forget()
             except:
