@@ -1006,7 +1006,6 @@ class MonitorWindow:
         self.empty_label = None
         self._closed = False  # 防止关闭后旧回调创建新网格
         self._repeat_after_id = None  # 长按连续调节的 after id
-        self.muted_players = {}  # name -> bool (静音状态跟踪)
 
         # B站监视器管线 (streamlink + ffmpeg → RTMP)
         self.bilibili_procs = {}      # name -> (p1, p2) subprocess
@@ -1359,7 +1358,7 @@ class MonitorWindow:
             col = idx % cols
             x = 10 + col * cell_w
             y = 10 + row * cell_h
-            frame, canvas, top_bar, vol_label, btn_mute, btn_minus, btn_plus = self.grid_widgets[name]
+            frame, canvas, top_bar, vol_label, btn_minus, btn_plus = self.grid_widgets[name]
             frame.place(x=x, y=y, width=cell_w, height=cell_h)
             # 卡片式布局: top_bar(22) + canvas(中间) + bottom_bar(28)
             top_h = 22
@@ -1367,12 +1366,9 @@ class MonitorWindow:
             canvas_h = cell_h - top_h - bottom_h
             top_bar.place(x=0, y=0, width=cell_w, height=top_h)
             canvas.place(x=0, y=top_h, width=cell_w, height=canvas_h)
-            # bottom_bar 是 frame 的子控件，已在 _show_grid 中 pack，只需定位 frame 本身
-            # 但 bottom_bar 需要重新 place 以适应 cell 宽度
-            # 实际上 bottom_bar 已 pack 到 frame 中，frame 缩放会自动调整
-            # 但为确保正确显示，显式 place
+            # bottom_bar 显式 place 适配 cell 宽度
             try:
-                bottom_bar = btn_mute.master  # bottom_bar 是 btn_mute 的父容器
+                bottom_bar = btn_minus.master  # bottom_bar 是 btn_minus 的父容器
                 bottom_bar.place(x=0, y=top_h + canvas_h, width=cell_w, height=bottom_h)
             except Exception:
                 pass
@@ -1393,20 +1389,22 @@ class MonitorWindow:
                            font=FONT_SMALL, highlightthickness=0, anchor="w")
         # 中间: 视频画面 canvas
         canvas = tk.Canvas(frame, bg=PAGE_BG, highlightthickness=0)
-        # 底部控制栏: − [百分比] + [静音]
+        # 底部控制栏: − [百分比] + (居中布局，移除静音按钮)
         bottom_bar = tk.Frame(frame, bg=ELEVATED_BG, highlightthickness=0)
         btn_minus = tk.Label(bottom_bar, text="  −  ", bg=ELEVATED_BG, fg=TEXT_PRIMARY,
-                             font=FONT_BODY_BOLD, highlightthickness=0, cursor="hand2")
+                             font=FONT_HEADING, highlightthickness=0, cursor="hand2",
+                             padx=8, pady=2)
         vol_label = tk.Label(bottom_bar, text="50%", bg=ELEVATED_BG, fg=TEXT_SECONDARY,
-                             font=FONT_SMALL, highlightthickness=0, width=5)
+                             font=FONT_BODY_BOLD, highlightthickness=0, width=6)
         btn_plus = tk.Label(bottom_bar, text="  +  ", bg=ELEVATED_BG, fg=TEXT_PRIMARY,
-                            font=FONT_BODY_BOLD, highlightthickness=0, cursor="hand2")
-        btn_mute = tk.Label(bottom_bar, text=" 🔊 ", bg=ELEVATED_BG, fg=TEXT_SECONDARY,
-                            font=FONT_SMALL, highlightthickness=0, cursor="hand2")
-        btn_minus.pack(side=tk.LEFT, padx=(4, 0))
-        vol_label.pack(side=tk.LEFT, padx=2)
-        btn_plus.pack(side=tk.LEFT, padx=(0, 2))
-        btn_mute.pack(side=tk.RIGHT, padx=(0, 4))
+                            font=FONT_HEADING, highlightthickness=0, cursor="hand2",
+                            padx=8, pady=2)
+        # 居中布局: 两侧弹性间距 + [− 百分比 +]
+        tk.Label(bottom_bar, bg=ELEVATED_BG, highlightthickness=0).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        btn_minus.pack(side=tk.LEFT, padx=(0, 4))
+        vol_label.pack(side=tk.LEFT, padx=4)
+        btn_plus.pack(side=tk.LEFT, padx=(4, 0))
+        tk.Label(bottom_bar, bg=ELEVATED_BG, highlightthickness=0).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # 注册 tk 控件主题更新
         self._tk_widgets.append((canvas, "bg", LIGHT_THEME["PAGE_BG"], DARK_THEME["PAGE_BG"]))
@@ -1421,23 +1419,18 @@ class MonitorWindow:
         self._tk_widgets.append((vol_label, "fg", LIGHT_THEME["TEXT_SECONDARY"], DARK_THEME["TEXT_SECONDARY"]))
         self._tk_widgets.append((btn_plus, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
         self._tk_widgets.append((btn_plus, "fg", LIGHT_THEME["TEXT_PRIMARY"], DARK_THEME["TEXT_PRIMARY"]))
-        self._tk_widgets.append((btn_mute, "bg", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"]))
-        self._tk_widgets.append((btn_mute, "fg", LIGHT_THEME["TEXT_SECONDARY"], DARK_THEME["TEXT_SECONDARY"]))
 
         frame.place(x=0, y=0, width=100, height=100)
         top_bar.place(x=0, y=0, width=100, height=22)
         canvas.place(x=0, y=22, width=100, height=50)
         bottom_bar.place(x=0, y=72, width=100, height=28)
 
-        # 存储控件引用: (frame, canvas, top_bar, vol_label, btn_mute, btn_minus, btn_plus)
-        self.grid_widgets[name] = (frame, canvas, top_bar, vol_label, btn_mute, btn_minus, btn_plus)
+        # 存储控件引用: (frame, canvas, top_bar, vol_label, btn_minus, btn_plus)
+        self.grid_widgets[name] = (frame, canvas, top_bar, vol_label, btn_minus, btn_plus)
         log("系统", f"[监视器-显示-步骤2] 创建卡片: {name}")
 
-        # 音量按钮事件绑定
-        btn_minus.bind("<Button-1>", lambda e, n=name: self._on_volume_dec(n, 5))
-        btn_plus.bind("<Button-1>", lambda e, n=name: self._on_volume_inc(n, 5))
-        btn_mute.bind("<Button-1>", lambda e, n=name: self._on_mute_toggle(n))
-        # 长按连续调节
+        # 音量按钮事件: ButtonPress-1 立即执行一次 + 启动连续调节, ButtonRelease-1 停止
+        # (移除 <Button-1> 绑定, 因与 <ButtonPress-1> 冲突)
         btn_minus.bind("<ButtonPress-1>", lambda e, n=name: self._start_repeat(n, -5))
         btn_plus.bind("<ButtonPress-1>", lambda e, n=name: self._start_repeat(n, 5))
         btn_minus.bind("<ButtonRelease-1>", lambda e: self._stop_repeat())
@@ -1489,46 +1482,26 @@ class MonitorWindow:
         self.app.obs.set_volume(player["obs_source_name"], new_vol)
         self._update_volume_label(name, new_vol)
 
-    def _on_mute_toggle(self, name):
-        """切换静音状态 (OBS 原生 SetInputMute)"""
-        player = self.app.find_player_in_any(name)
-        if not player or not player.get("obs_source_name"):
-            return
-        if not self.app.obs or not self.app.obs.connected:
-            return
-        src = player["obs_source_name"]
-        try:
-            # 查询当前静音状态并切换
-            resp = self.app.obs.ws.call(requests.GetInputMute(inputName=src))
-            is_muted = resp.getInputMuted()
-            new_muted = not is_muted
-            self.app.obs.ws.call(requests.SetInputMute(inputName=src, inputMuted=new_muted))
-            self.muted_players[name] = new_muted
-            # 更新按钮显示
-            if name in self.grid_widgets:
-                _, _, _, _, btn_mute, _, _ = self.grid_widgets[name]
-                if new_muted:
-                    btn_mute.configure(text=" 🔇 ", fg=TEXT_PRIMARY)
-                else:
-                    btn_mute.configure(text=" 🔊 ", fg=TEXT_SECONDARY)
-            log("系统", f"[监视器-静音] {name} -> {'静音' if new_muted else '取消静音'}")
-        except Exception as e:
-            log("系统", f"[监视器-静音-失败] {name}: {e}")
-
     def _update_volume_label(self, name, vol):
         """更新指定视角的音量百分比标签"""
         if name not in self.grid_widgets:
             return
-        _, _, _, vol_label, _, _, _ = self.grid_widgets[name]
+        _, _, _, vol_label, _, _ = self.grid_widgets[name]
         try:
             vol_label.configure(text=f"{vol}%")
         except Exception:
             pass
 
     def _start_repeat(self, name, step):
-        """长按按钮开始连续调节 (300ms 初始延迟 + 150ms 间隔)"""
+        """长按按钮: 立即执行一次音量变化 + 启动连续调节 (300ms初始延迟 + 150ms间隔)"""
         self._stop_repeat()
         is_inc = step > 0
+        # 立即执行一次
+        if is_inc:
+            self._on_volume_inc(name, abs(step))
+        else:
+            self._on_volume_dec(name, abs(step))
+        # 300ms 后开始连续调节
         def _first():
             self._repeat_after_id = self.win.after(150, lambda: self._repeat_action(name, step, is_inc))
         self._repeat_after_id = self.win.after(300, _first)
@@ -1555,7 +1528,6 @@ class MonitorWindow:
     def _sync_volume_ui(self, obs):
         """同步所有卡片的音量显示 (由 App._sync_volumes 调用, 500ms 间隔)
         - 读取 OBS 实际音量并更新百分比标签
-        - 同步静音按钮状态
         - 当前视角高亮边框
         """
         if self._closed:
@@ -1565,7 +1537,7 @@ class MonitorWindow:
         current_name = self.app.get_current_display_name()
         for name, widgets in list(self.grid_widgets.items()):
             try:
-                frame, canvas, top_bar, vol_label, btn_mute, btn_minus, btn_plus = widgets
+                frame, canvas, top_bar, vol_label, btn_minus, btn_plus = widgets
             except Exception:
                 continue
             player = self.app.find_player_in_any(name)
@@ -1579,17 +1551,6 @@ class MonitorWindow:
                     vol_label.configure(text=f"{vol}%")
                 except Exception:
                     pass
-            # 静音状态
-            try:
-                resp = obs.ws.call(requests.GetInputMute(inputName=src))
-                is_muted = resp.getInputMuted()
-                self.muted_players[name] = is_muted
-                if is_muted:
-                    btn_mute.configure(text=" 🔇 ", fg=TEXT_PRIMARY)
-                else:
-                    btn_mute.configure(text=" 🔊 ", fg=TEXT_SECONDARY)
-            except Exception:
-                pass
             # 当前视角高亮边框
             try:
                 if name == current_name:
@@ -1654,8 +1615,8 @@ class MonitorWindow:
                 if not self.app.obs or not self.app.obs.connected:
                     time.sleep(1)
                     continue
-                # 获取截图 (480x270 JPEG, 降低分辨率提高帧率)
-                img_data = self.app.obs.get_source_screenshot(src_name, width=480, height=270, quality=50)
+                # 获取截图 (640x360 JPEG, 适配大窗口缩放)
+                img_data = self.app.obs.get_source_screenshot(src_name, width=640, height=360, quality=55)
                 if not img_data:
                     fail_count += 1
                     if fail_count % 10 == 1:
@@ -1668,9 +1629,8 @@ class MonitorWindow:
                     img_data = img_data.split(",", 1)[-1]
                 img_bytes = base64.b64decode(img_data)
                 pil_img = Image.open(io.BytesIO(img_bytes))
-                photo = ImageTk.PhotoImage(pil_img)
-                # 在主线程更新 canvas
-                def _draw(n=name, p=photo):
+                # 在主线程更新 canvas (含缩放适配)
+                def _draw(n=name, img=pil_img):
                     if not self.screenshot_running.get(n, False) or self._closed:
                         return
                     if n not in self.screenshot_canvases:
@@ -1678,18 +1638,26 @@ class MonitorWindow:
                     c = self.screenshot_canvases[n]
                     try:
                         if c.winfo_exists():
+                            cw = c.winfo_width()
+                            ch = c.winfo_height()
+                            if cw > 1 and ch > 1:
+                                # 按canvas实际尺寸缩放图片 (LANCZOS 高质量)
+                                resized = img.resize((cw, ch), Image.LANCZOS)
+                                photo = ImageTk.PhotoImage(resized)
+                            else:
+                                photo = ImageTk.PhotoImage(img)
                             c.delete("all")
-                            c.create_image(c.winfo_width()//2, c.winfo_height()//2, image=p, anchor=tk.CENTER)
+                            c.create_image(cw//2, ch//2, image=photo, anchor=tk.CENTER)
                             # 保持引用防止 GC
-                            c._screenshot_photo = p
+                            c._screenshot_photo = photo
                     except:
                         pass
                 try:
                     self.win.after(0, _draw)
                 except:
                     break
-                # 截图帧率: 约 10fps (平衡性能与流畅度)
-                time.sleep(0.1)
+                # 截图帧率: 约 15fps (平衡性能与流畅度)
+                time.sleep(0.066)
             except Exception as e:
                 fail_count += 1
                 if fail_count % 10 == 1:
@@ -1714,7 +1682,7 @@ class MonitorWindow:
             log("系统", f"[监视器-VLC] {name} 已不在网格中，取消 VLC 启动")
             return
         try:
-            _, current_canvas, _, _, _, _, _ = self.grid_widgets[name]
+            _, current_canvas, _, _, _, _ = self.grid_widgets[name]
             if current_canvas is not canvas:
                 log("系统", f"[监视器-VLC] {name} canvas 已更换，取消旧 VLC 启动")
                 return
