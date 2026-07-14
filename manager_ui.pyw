@@ -1201,6 +1201,8 @@ class MonitorWindow:
                 if canvas.winfo_exists():
                     mp.set_hwnd(canvas.winfo_id())
                 mp.play()
+                # 重新播放后重新设置点击穿透
+                self.win.after(500, lambda c=canvas: self._make_vlc_clickthrough(c))
             except Exception as e:
                 log("系统", f"[监视器-VLC健康检查] {name} 异常: {e}")
 
@@ -1327,6 +1329,29 @@ class MonitorWindow:
         except:
             pass
 
+    def _make_vlc_clickthrough(self, canvas):
+        """用 Win32 API 让 VLC 嵌入后创建的子窗口透明点击穿透
+        VLC 通过 set_hwnd 嵌入 canvas 后会创建子窗口覆盖在 canvas 上方，
+        拦截鼠标事件导致 canvas 的 <Button-1> 绑定无法触发。
+        设置 WS_EX_TRANSPARENT 让鼠标点击穿透到下方的 canvas。"""
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            GW_CHILD = 5
+            GW_HWNDNEXT = 2
+            GWL_EXSTYLE = -20
+            WS_EX_TRANSPARENT = 0x00000020
+            hwnd = canvas.winfo_id()
+            if not hwnd:
+                return
+            child = user32.GetWindow(hwnd, GW_CHILD)
+            while child:
+                ex_style = user32.GetWindowLongW(child, GWL_EXSTYLE)
+                user32.SetWindowLongW(child, GWL_EXSTYLE, ex_style | WS_EX_TRANSPARENT)
+                child = user32.GetWindow(child, GW_HWNDNEXT)
+        except Exception:
+            pass
+
     def _start_vlc(self, name, canvas, url):
         if not self.vlc_instance or not self.win.winfo_exists():
             return
@@ -1353,6 +1378,8 @@ class MonitorWindow:
             mp.set_hwnd(hwnd)
             mp.play()
             self.vlc_instances[name] = (self.vlc_instance, mp, canvas)
+            # 延迟设置点击穿透：VLC 子窗口需要一点时间创建
+            self.win.after(500, lambda: self._make_vlc_clickthrough(canvas))
         except Exception as e:
             log("系统", f"监视器启动失败 {name}: {e}")
 
@@ -1374,6 +1401,8 @@ class MonitorWindow:
                 mp.set_media(media)
                 mp.set_hwnd(canvas.winfo_id())
                 mp.play()
+                # 重新播放后重新设置点击穿透
+                self.win.after(500, lambda: self._make_vlc_clickthrough(canvas))
             else:
                 log("系统", f"[监视器-VLC重试] {name} 已在播放，无需重试")
         except Exception as e:
@@ -3346,11 +3375,11 @@ class ManagerApp:
 
     def save_config(self):
         # 保存时剥离运行时状态字段，确保每次启动均为全新状态
-        # 避免异常关闭后残留 active/obs_source_name 等导致卡死
+        # 注意: obs_source_name 需要保留，switcher.py 依赖它切换视角
+        # load_cfg 启动时会清空 obs_source_name，保证全新状态
         players_clean = []
         for p in self.players:
             pc = {k: v for k, v in p.items() if k not in ("active", "source_ok", "stream_pid")}
-            pc["obs_source_name"] = ""  # 源名由 sync_player 在运行时重建
             players_clean.append(pc)
         cfg = {
             "obs_host": self.obs_host,
