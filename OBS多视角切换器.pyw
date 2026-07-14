@@ -561,9 +561,16 @@ class OBSController:
         return any(s["sceneName"] == name for s in scenes)
 
 # ==================== 基础配置 ====================
-BASE_DIR = r"C:\myobs"
+# 动态获取 BASE_DIR: 支持 PyInstaller 打包和任意安装路径
+if getattr(sys, 'frozen', False):
+    # PyInstaller 打包后: exe 所在目录
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    # 开发模式: 脚本所在目录
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 MEDIAMTX_EXE = os.path.join(BASE_DIR, "mediamtx.exe")
+MEDIAMTX_YML = os.path.join(BASE_DIR, "mediamtx.yml")
 FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
 FFPROBE = r"C:\ffmpeg\bin\ffprobe.exe"
 mediamtx_proc = None
