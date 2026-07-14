@@ -2100,15 +2100,15 @@ class ManagerApp:
         """刷新活跃池卡片网格 (显示池中所有选手，含已关闭的)"""
         # 清除旧卡片
         for name in list(self._pool_cards.keys()):
-            frame, _ = self._pool_cards.pop(name)
-            frame.destroy()
+            entry = self._pool_cards.pop(name)
+            entry[0].destroy()
 
         pool = list(self.active_players)
         if not pool:
             empty = ctk.CTkLabel(self.pool_grid, text="暂无活跃选手，点击「添加视角」按钮添加", font=FONT_SMALL,
                                  text_color=TEXT_SECONDARY)
             empty.grid(row=0, column=0, padx=4, pady=4, sticky="w")
-            self._pool_cards["_empty"] = (empty, empty)
+            self._pool_cards["_empty"] = (empty, empty, None, None)
             return
 
         # 每行最多4个卡片
@@ -2122,7 +2122,6 @@ class ManagerApp:
             card = ctk.CTkFrame(self.pool_grid, fg_color=ELEVATED_BG, corner_radius=8, border_width=1, border_color=border_c)
             card.grid(row=row, column=col, padx=3, pady=3, sticky="ew")
             self._register_frame(card, "elevated")
-            # 让列等宽
             self.pool_grid.columnconfigure(col, weight=1, uniform="pool")
 
             card_inner = ctk.CTkFrame(card, fg_color="transparent")
@@ -2138,13 +2137,44 @@ class ManagerApp:
                                     font=FONT_SMALL, text_color=status_color)
             view_lbl.pack(anchor="w")
 
+            # 音量滑条 + 百分比标签 (仅活跃且有OBS源的选手显示)
+            if is_active and p.get("obs_source_name"):
+                vol_row = ctk.CTkFrame(card_inner, fg_color="transparent")
+                vol_row.pack(fill=tk.X, pady=(4, 0))
+                vol_label = ctk.CTkLabel(vol_row, text="音量", font=FONT_SMALL,
+                                         text_color=TEXT_SECONDARY, width=28)
+                vol_label.pack(side=tk.LEFT)
+                slider = ctk.CTkSlider(vol_row, from_=0, to=100, width=80, height=16,
+                                       fg_color=BORDER, progress_color=ACCENT,
+                                       button_color=ACCENT, button_hover_color=ACCENT_HOVER,
+                                       command=lambda v, pl=p: self._on_pool_volume_change(pl, v))
+                slider.set(50)  # 默认值, 定时刷新会同步真实值
+                slider.pack(side=tk.LEFT, padx=(4, 4), fill=tk.X, expand=True)
+                pct_lbl = ctk.CTkLabel(vol_row, text="50%", font=FONT_SMALL,
+                                       text_color=TEXT_SECONDARY, width=36)
+                pct_lbl.pack(side=tk.LEFT)
+                self._pool_cards[p["name"]] = (card, name_lbl, slider, pct_lbl)
+            else:
+                self._pool_cards[p["name"]] = (card, name_lbl, None, None)
+
             # 右键菜单
             card.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
             card_inner.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
             name_lbl.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
             view_lbl.bind("<Button-3>", lambda e, pl=p: self._pool_card_menu(e, pl))
 
-            self._pool_cards[p["name"]] = (card, name_lbl)
+    def _on_pool_volume_change(self, player, value):
+        """仪表盘滑条音量变化回调"""
+        src = player.get("obs_source_name")
+        if not src or not self.obs or not self.obs.connected:
+            return
+        vol = int(round(float(value)))
+        self.obs.set_volume(src, vol)
+        # 更新百分比标签
+        if player["name"] in self._pool_cards:
+            entry = self._pool_cards[player["name"]]
+            if len(entry) > 3 and entry[3]:
+                entry[3].configure(text=f"{vol}%")
 
     def _pool_card_menu(self, event, player):
         """活跃池卡片右键菜单"""
