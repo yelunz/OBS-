@@ -185,14 +185,6 @@ try:
 except Exception:
     pass
 
-# ==================== Pillow 模块检测（监视器截图用） ====================
-PIL_AVAILABLE = False
-try:
-    from PIL import Image, ImageTk
-    PIL_AVAILABLE = True
-except Exception:
-    pass
-
 # ==================== 每次启动清空日志 ====================
 LOG_FILE = os.path.join(r"C:\myobs", "debug.log")
 try:
@@ -955,12 +947,6 @@ class MonitorWindow:
 
         # B站监视器管线 (streamlink + ffmpeg → RTMP)
         self.bilibili_procs = {}      # name -> (p1, p2) subprocess
-        # 截图监视器 (抖音/自定义网页)
-        self.screenshot_canvases = {}  # name -> canvas
-        self.screenshot_frames = {}    # name -> bytes (latest JPEG frame)
-        self.screenshot_running = {}   # name -> bool
-        self.screenshot_lock = threading.Lock()
-        self.screenshot_render_id = None
 
         if VLC_AVAILABLE:
             try:
@@ -1155,9 +1141,6 @@ class MonitorWindow:
         # 停止所有 B站管线
         for name in list(self.bilibili_procs.keys()):
             self._stop_bilibili_pipeline(name)
-        # 停止所有截图轮询
-        for name in list(self.screenshot_running.keys()):
-            self._stop_screenshot_monitor(name)
         # 收集需要销毁的 Tk frame (必须在主线程执行)
         frames_to_destroy = []
         for name in list(self.grid_widgets.keys()):
@@ -1195,10 +1178,6 @@ class MonitorWindow:
             except:
                 # 如果 win 已销毁，直接尝试销毁
                 _destroy_frames()
-        # 清空截图相关
-        self.screenshot_canvases.clear()
-        with self.screenshot_lock:
-            self.screenshot_frames.clear()
         # 重置 players 列表 (强制 refresh 重建所有网格)
         self.players = []
         log("系统", "[监视器-全清] 所有状态已清空")
@@ -1364,10 +1343,6 @@ class MonitorWindow:
         # 停止 B站管线
         if name in self.bilibili_procs:
             self._stop_bilibili_pipeline(name)
-
-        # 停止截图轮询
-        if name in self.screenshot_running:
-            self._stop_screenshot_monitor(name)
 
         # 停止并释放 VLC 实例
         if name in self.vlc_instances:
@@ -1555,133 +1530,8 @@ class MonitorWindow:
                     self.app._bilibili_pipelines.pop(name, None)
                     log("系统", f"[监视器-B站-注销] {name} 管线已注销全局注册")
 
-    # ==================== 截图监视器 (抖音/自定义网页) ====================
-    def _start_screenshot_monitor(self, name, canvas):
-        """启动 OBS 截图轮询线程"""
-        log("系统", f"[监视器-截图-步骤1] 开始截图轮询: {name}")
-        self.screenshot_canvases[name] = canvas
-        self.screenshot_running[name] = True
-        t = threading.Thread(target=self._screenshot_thread, args=(name,), daemon=True)
-        t.start()
-        log("系统", f"[监视器-截图-步骤2] 截图线程已启动: {name}")
-        # 启动渲染循环（如果尚未启动）
-        self._ensure_screenshot_render_loop()
-
-    def _stop_screenshot_monitor(self, name):
-        """停止截图轮询"""
-        log("系统", f"[监视器-截图-停止] 停止截图轮询: {name}")
-        self.screenshot_running[name] = False
-        self.screenshot_canvases.pop(name, None)
-        with self.screenshot_lock:
-            self.screenshot_frames.pop(name, None)
-
-    def _screenshot_thread(self, name):
-        """截图轮询线程: 持续调用 GetSourceScreenshot，存储最新帧"""
-        log("系统", f"[监视器-截图-线程] 线程启动: {name}")
-        fail_count = 0
-        success_count = 0
-        src_name_logged = False
-        while self.screenshot_running.get(name, False) and self.win.winfo_exists():
-            try:
-                obs = self.app.obs
-                if not obs or not obs.connected:
-                    time.sleep(0.5)
-                    continue
-
-                # 获取选手的 OBS 源名称
-                player = next((p for p in self.app.active_players if p["name"] == name), None)
-                if not player:
-                    time.sleep(0.5)
-                    continue
-                src_name = player.get("obs_source_name", "")
-                if not src_name:
-                    if fail_count % 10 == 0:
-                        log("系统", f"[监视器-截图-线程] {name} obs_source_name 为空，等待 sync_player 完成")
-                    fail_count += 1
-                    time.sleep(0.5)
-                    continue
-
-                if not src_name_logged:
-                    log("系统", f"[监视器-截图-线程] {name} 使用源名: {src_name}")
-                    src_name_logged = True
-
-                # 调用截图 API (480x270, JPEG 质量 50)
-                img_b64 = obs.get_source_screenshot(src_name, 480, 270, 50)
-                if img_b64:
-                    # 去掉可能的 data:image/jpeg;base64, 前缀
-                    if img_b64.startswith("data:"):
-                        img_b64 = img_b64.split(",", 1)[-1]
-                    img_bytes = base64.b64decode(img_b64)
-                    with self.screenshot_lock:
-                        self.screenshot_frames[name] = img_bytes
-                    if success_count == 0:
-                        log("系统", f"[监视器-截图-线程] {name} 首帧成功 ({len(img_bytes)} bytes)")
-                    success_count += 1
-                    fail_count = 0
-                else:
-                    fail_count += 1
-                    if fail_count == 1 or fail_count % 30 == 0:
-                        log("系统", f"[监视器-截图-线程] {name} 截图返回空 (已失败{fail_count}次, 源={src_name})")
-            except Exception as e:
-                fail_count += 1
-                if fail_count == 1 or fail_count % 30 == 0:
-                    log("系统", f"[监视器-截图-线程] {name} 截图异常 (已失败{fail_count}次): {e}")
-
-            # 约 10fps (100ms) - 降低轮询频率以减少 OBS WebSocket 压力
-            time.sleep(0.1)
-
-        log("系统", f"[监视器-截图-线程] 线程退出: {name} (成功{success_count}帧, 失败{fail_count}次)")
-
-    def _ensure_screenshot_render_loop(self):
-        """确保截图渲染循环在运行"""
-        if self.screenshot_render_id is not None:
-            return
-        self._screenshot_render_loop()
-
-    def _screenshot_render_loop(self):
-        """主线程渲染循环: 每 33ms 将最新截图帧渲染到 Canvas"""
-        if not self.win.winfo_exists():
-            self.screenshot_render_id = None
-            return
-
-        with self.screenshot_lock:
-            items = list(self.screenshot_frames.items())
-
-        for name, img_bytes in items:
-            canvas = self.screenshot_canvases.get(name)
-            if not canvas or not canvas.winfo_exists():
-                with self.screenshot_lock:
-                    self.screenshot_frames.pop(name, None)
-                continue
-            try:
-                w = canvas.winfo_width()
-                h = canvas.winfo_height()
-                if w > 1 and h > 1:
-                    pil_img = Image.open(io.BytesIO(img_bytes))
-                    # 保持宽高比缩放 (letterbox)
-                    img_w, img_h = pil_img.size
-                    scale = min(w / img_w, h / img_h)
-                    new_w, new_h = int(img_w * scale), int(img_h * scale)
-                    pil_img = pil_img.resize((new_w, new_h), Image.BILINEAR)
-                    photo = ImageTk.PhotoImage(pil_img)
-                    canvas.delete("all")
-                    # 居中绘制
-                    x = (w - new_w) // 2
-                    y = (h - new_h) // 2
-                    canvas.create_image(x, y, anchor=tk.NW, image=photo)
-                    # 保持引用防止 GC
-                    canvas._photo_ref = photo
-            except Exception:
-                pass
-
-        # 继续渲染循环 (100ms - 与截图频率一致)
-        if self.screenshot_canvases:
-            self.screenshot_render_id = self.win.after(100, self._screenshot_render_loop)
-        else:
-            self.screenshot_render_id = None
-
     def refresh_all(self):
-        """刷新所有视角：在子线程清理 VLC/管线/截图，避免阻塞主线程"""
+        """刷新所有视角：在子线程清理 VLC/管线，避免阻塞主线程"""
         log("系统", "[监视器-刷新所有] 开始 (子线程清理)")
         # 立即隐藏所有网格，避免清理过程中残留画面闪烁
         for name in list(self.grid_widgets.keys()):
@@ -1720,14 +1570,7 @@ class MonitorWindow:
             pass
         # 停止周期性刷新循环
         self._stop_refresh_loop()
-        # 停止截图渲染循环
-        if self.screenshot_render_id:
-            try:
-                self.win.after_cancel(self.screenshot_render_id)
-            except:
-                pass
-            self.screenshot_render_id = None
-        # 完全清空所有状态 (VLC/管线/截图/网格/paased)
+        # 完全清空所有状态 (VLC/管线/网格/paased)
         self._full_cleanup()
         if not self.embedded:
             # 独立弹出窗口关闭时清理 popup_monitor (不影响嵌入监视器)
