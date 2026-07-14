@@ -186,7 +186,7 @@ except Exception:
     pass
 
 # ==================== 每次启动清空日志 ====================
-LOG_FILE = os.path.join(r"C:\myobs", "debug.log")
+LOG_FILE = os.path.join(BASE_DIR, "debug.log")
 try:
     open(LOG_FILE, "w").close()
 except:
