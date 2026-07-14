@@ -1343,26 +1343,16 @@ class MonitorWindow:
         self.grid_widgets[name] = (frame, canvas, name_label)
         log("系统", f"[监视器-显示-步骤2] 创建网格: {name}")
 
-        if plat == "twitch":
-            # Twitch: 传统推流读取方法 — VLC 嵌入 canvas 播放 RTMP 流
-            # 帧率与 OBS 中 VLC 源相同 (同一 RTMP 流)
-            if name not in self.vlc_instances:
-                default_sn = f"player{player['id']}"
-                stream_name = player.get("stream_name", default_sn)
-                rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
-                self.win.after(2000, self._start_vlc, name, canvas, rtmp_url)
-                # 6s 后兜底重试 (流未就绪时 VLC 可能连接失败)
-                self.win.after(6000, self._retry_vlc, name, canvas, rtmp_url)
-                log("系统", f"[监视器-显示-Twitch] 安排 VLC 启动: {name} -> {rtmp_url}")
-
-        elif plat in ("bilibili", "douyin", "custom_web"):
-            # B站/抖音/自定义网页: OBS 浏览器源 + 截图轮询预览
-            if PIL_AVAILABLE:
-                self._start_screenshot_monitor(name, canvas)
-                log("系统", f"[监视器-显示-截图] 启动截图轮询: {name}")
-            else:
-                log("系统", f"[监视器-显示-截图-失败] Pillow 未安装: {name}")
-                canvas.create_text(150, 100, text="Pillow 未安装", fill="gray", font=FONT_SMALL)
+        # 统一所有平台: VLC 嵌入 canvas 播放 RTMP 流
+        # (不再使用 OBS 截图轮询, VLC 帧率远高于截图)
+        if name not in self.vlc_instances:
+            default_sn = f"player{player['id']}"
+            stream_name = player.get("stream_name", default_sn)
+            rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
+            self.win.after(2000, self._start_vlc, name, canvas, rtmp_url)
+            # 6s 后兜底重试 (流未就绪时 VLC 可能连接失败)
+            self.win.after(6000, self._retry_vlc, name, canvas, rtmp_url)
+            log("系统", f"[监视器-显示-VLC] 安排 VLC 启动: {name} -> {rtmp_url}")
 
     def _hide_grid(self, name):
         """隐藏并销毁指定视角的网格 (移除 paused_players 机制，直接销毁避免状态不一致)"""
