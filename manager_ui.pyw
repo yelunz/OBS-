@@ -452,19 +452,6 @@ class OBSController:
         except Exception:
             return None
 
-    def set_source_index(self, name, index):
-        """调整场景项的层级顺序 (index 越大越在上层)"""
-        m = self.get_scene_item_map()
-        if name in m:
-            try:
-                self.ws.call(requests.SetSceneItemIndex(
-                    sceneName=self.scene_name,
-                    sceneItemId=m[name]["id"],
-                    sceneItemIndex=index
-                ))
-            except Exception as e:
-                log("系统", f"[OBS-调整层级失败] {name}: {e}")
-
     def set_mute(self, source_name, mute):
         try:
             self.ws.call(requests.SetInputMute(inputName=source_name, inputMuted=mute))
@@ -1363,30 +1350,6 @@ class MonitorWindow:
         try:
             frame.destroy()
         except:
-            pass
-
-    def _make_vlc_clickthrough(self, canvas):
-        """用 Win32 API 让 VLC 嵌入后创建的子窗口透明点击穿透
-        VLC 通过 set_hwnd 嵌入 canvas 后会创建子窗口覆盖在 canvas 上方，
-        拦截鼠标事件导致 canvas 的 <Button-1> 绑定无法触发。
-        设置 WS_EX_TRANSPARENT | WS_EX_LAYERED 让鼠标点击穿透到下方的 canvas。"""
-        try:
-            import ctypes
-            user32 = ctypes.windll.user32
-            GW_CHILD = 5
-            GW_HWNDNEXT = 2
-            GWL_EXSTYLE = -20
-            WS_EX_TRANSPARENT = 0x00000020
-            WS_EX_LAYERED = 0x00080000
-            hwnd = canvas.winfo_id()
-            if not hwnd:
-                return
-            child = user32.GetWindow(hwnd, GW_CHILD)
-            while child:
-                ex_style = user32.GetWindowLongW(child, GWL_EXSTYLE)
-                user32.SetWindowLongW(child, GWL_EXSTYLE, ex_style | WS_EX_TRANSPARENT | WS_EX_LAYERED)
-                child = user32.GetWindow(child, GW_HWNDNEXT)
-        except Exception:
             pass
 
     def _start_vlc(self, name, canvas, url):
