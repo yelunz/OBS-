@@ -1974,7 +1974,11 @@ class ManagerApp:
         except Exception as e:
             log("系统", f"[初始化-错误] _update_log_combo 失败: {e}")
         if self.first_run or not self.obs_host:
-            self.root.after(200, self.show_obs_login)
+            # 首次启动:先弹欢迎引导,引导结束后再弹连接窗口
+            if self.first_run:
+                self.root.after(200, self.show_welcome_guide)
+            else:
+                self.root.after(200, self.show_obs_login)
         self.root.after(100, self.async_connect_obs)
         self._cleanup_edge_profiles()
         self.refresh_loop()
@@ -3746,6 +3750,43 @@ class ManagerApp:
         with open(CONFIG_FILE + ".tmp", "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=4, ensure_ascii=False)
         os.replace(CONFIG_FILE + ".tmp", CONFIG_FILE)
+
+    def show_welcome_guide(self):
+        """首次启动欢迎引导: 提示用户准备 OBS 和 WebSocket"""
+        top = ctk.CTkToplevel(self.root)
+        top.title("欢迎使用 OBS多视角切换器")
+        top.resizable(False, False)
+        top.grab_set()
+
+        # 标题
+        ctk.CTkLabel(top, text="欢迎使用 OBS多视角切换器", font=FONT_TITLE).pack(padx=30, pady=(25, 10))
+        ctk.CTkLabel(top, text="首次使用请按以下 3 步准备:", font=FONT_BODY).pack(padx=30, pady=(0, 15))
+
+        # 三步引导
+        guide_frame = ctk.CTkFrame(top, fg_color="transparent")
+        guide_frame.pack(padx=30, pady=(0, 15), fill=tk.X)
+
+        steps = [
+            ("① 安装 OBS Studio", "若未安装,请前往 obsproject.com 下载\n(本安装包不含 OBS,需自行安装)"),
+            ("② 开启 WebSocket", "OBS 菜单「工具」→「OBS WebSocket 服务器设置」\n勾选「启用」,记下端口(默认4455)和密码"),
+            ("③ 填写连接信息", "下一步弹窗中填入主机/端口/密码\n即可连接 OBS 开始使用"),
+        ]
+        for title, desc in steps:
+            row = ctk.CTkFrame(guide_frame, fg_color="transparent")
+            row.pack(fill=tk.X, pady=4)
+            ctk.CTkLabel(row, text=title, font=FONT_BODY_BOLD, anchor=tk.W).pack(fill=tk.X)
+            ctk.CTkLabel(row, text=desc, font=FONT_SMALL, anchor=tk.W, justify=tk.LEFT).pack(fill=tk.X, padx=(15, 0))
+
+        ctk.CTkLabel(top, text="详细教程请查看安装目录下的「使用说明.txt」", font=FONT_SMALL).pack(padx=30, pady=(0, 15))
+
+        def _continue():
+            top.destroy()
+            self.show_obs_login()
+
+        ctk.CTkButton(top, text="我已准备好,开始连接", command=_continue, width=200).pack(pady=(0, 20))
+        # 居中显示
+        top.update_idletasks()
+        top.geometry(f"+{(top.winfo_screenwidth() - top.winfo_width()) // 2}+{(top.winfo_screenheight() - top.winfo_height()) // 2}")
 
     def show_obs_login(self):
         dlg = OBSLoginDialog(self.root, self.obs_host, self.obs_port, self.obs_pwd)

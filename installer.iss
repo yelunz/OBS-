@@ -52,17 +52,25 @@ Source: "ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "ffprobe.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "config.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
 Source: "app_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+; VLC 静默安装包 (安装时检测,未装则静默安装)
+Source: "vlc-setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall nocompression
 ; LICENSE 文件
 Source: "LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
+; 使用说明
+Source: "使用说明.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 ; 创建快捷方式
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app_icon.ico"
+Name: "{group}\使用说明"; Filename: "{app}\使用说明.txt"
 Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app_icon.ico"; Tasks: desktopicon
 
 ; 安装后运行
 [Run]
+; VLC 静默安装: 检测未装则安装 (/S 静默模式, /D 指定目录)
+Filename: "{tmp}\vlc-setup.exe"; Parameters: "/S"; StatusMsg: "正在安装 VLC 播放器 (Twitch源与监视器预览需要)..."; Check: NeedInstallVLC(); Flags: waituntilterminated
+; 启动主程序
 Filename: "{app}\{#MyAppExeName}"; Description: "立即启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 ; 卸载时删除配置 (询问)
@@ -70,6 +78,31 @@ Filename: "{app}\{#MyAppExeName}"; Description: "立即启动 {#MyAppName}"; Fla
 Type: files; Name: "{app}\config.json"
 
 [Code]
+// 检测系统是否已安装 VLC (通过注册表)
+// 检查 HKLM 64位和32位两个位置
+function NeedInstallVLC(): Boolean;
+var
+  vlcPath: String;
+begin
+  // 优先检查 64 位注册表
+  if RegQueryStringValue(HKLM, 'SOFTWARE\VideoLAN\VLC', 'InstallDir', vlcPath) then begin
+    Result := False;
+    Exit;
+  end;
+  // 检查 32 位注册表 (WOW6432Node)
+  if RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\VideoLAN\VLC', 'InstallDir', vlcPath) then begin
+    Result := False;
+    Exit;
+  end;
+  // 检查当前用户
+  if RegQueryStringValue(HKCU, 'SOFTWARE\VideoLAN\VLC', 'InstallDir', vlcPath) then begin
+    Result := False;
+    Exit;
+  end;
+  // 未找到 VLC,需要安装
+  Result := True;
+end;
+
 // 卸载时询问是否保留配置
 function InitializeUninstall(): Boolean;
 begin
