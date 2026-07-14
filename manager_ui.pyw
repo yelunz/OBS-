@@ -435,6 +435,24 @@ class OBSController:
                 sceneItemEnabled=visible
             ))
 
+    def bring_to_front(self, name):
+        """将源移到场景最顶层 (视觉最前面, 覆盖其他源)
+        OBS WebSocket v5: sceneItemIndex 0=最底层, 最大值=最顶层
+        """
+        try:
+            m = self.get_scene_item_map()
+            if name not in m:
+                return
+            max_index = len(m) - 1
+            self.ws.call(requests.SetSceneItemIndex(
+                sceneName=self.scene_name,
+                sceneItemId=m[name]["id"],
+                sceneItemIndex=max_index
+            ))
+            log("系统", f"[置顶] {name} -> index={max_index}")
+        except Exception as e:
+            log("系统", f"[置顶失败] {name}: {e}")
+
     def trigger_media_play(self, name):
         """主动触发VLC源播放，解决 always_play 不生效导致画面不显示的问题"""
         try:
@@ -2617,7 +2635,10 @@ class ManagerApp:
             self.obs.set_visibility(src_name, True)
             self.obs.set_mute(src_name, False)
 
-            # 3. 主动触发播放 (仅 VLC 源需要, 浏览器源不需要)
+            # 3. 将当前源置顶 (覆盖其他可见的浏览器源, 解决OBS从上到下渲染覆盖问题)
+            self.obs.bring_to_front(src_name)
+
+            # 4. 主动触发播放 (仅 VLC 源需要, 浏览器源不需要)
             if player.get("platform") == "twitch":
                 self.obs.trigger_media_play(src_name)
 
@@ -2663,12 +2684,22 @@ class ManagerApp:
                             except Exception as e:
                                 log("系统", f"[刷新-监视器VLC异常] {name}: {e}")
                 else:
-                    # B站/抖音: 刷新浏览器源 (重新设置 URL 触发重载)
+                    # B站/抖音: 刷新浏览器源 (重新设置 URL 触发页面重载)
                     src_name = player.get("obs_source_name")
                     url = player.get("url", "")
                     if src_name and url and self.obs and self.obs.connected:
                         self.obs.refresh_browser_source(src_name, url)
-                        log("系统", f"[刷新-浏览器源] {name} 重新加载: {url}")
+                        # 浏览器源重载后音频状态会重置, 需要重新设置静音
+                        # 当前视角取消静音, 非当前视角静音
+                        cur_name = self.get_current_display_name()
+                        time.sleep(1)  # 等待浏览器源重载完成
+                        if name == cur_name:
+                            self.obs.set_mute(src_name, False)
+                            # 刷新后可能层级变化, 重新置顶
+                            self.obs.bring_to_front(src_name)
+                        else:
+                            self.obs.set_mute(src_name, True)
+                        log("系统", f"[刷新-浏览器源] {name} 重新加载: {url}, 静音={name != cur_name}")
                 log("系统", f"[刷新-完成] {name}")
                 self.root.after(0, self.refresh_ui)
             except Exception as e:
