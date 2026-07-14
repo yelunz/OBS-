@@ -655,17 +655,14 @@ def check_douyin_source(url):
 
 def check_source(player):
     plat = player["platform"]
+    url = player.get("url", "")
+    if not url:
+        return
     if plat == "twitch":
-        url = player.get("twitch_url", "") or f"https://www.twitch.tv/{player.get('channel', '')}"
-        if not url:
-            return
         ok = check_twitch_source(url)
         player["source_ok"] = ok
     elif plat == "douyin":
-        du = player.get("douyin_url", "")
-        if not du:
-            return
-        ok = check_douyin_source(du)
+        ok = check_douyin_source(url)
         player["source_ok"] = ok
 
 def start_mediamtx():
@@ -735,23 +732,23 @@ def parse_clipboard_url(url_string):
         return None
     douyin_stream_match = re.search(r'https?://(?:pull-flv-[a-z0-9]+\.douyincdn\.com|[\w-]+\.douyinliving\.com)/\S+', clip)
     if douyin_stream_match:
-        return {"platform": "douyin", "douyin_url": douyin_stream_match.group(0), "browser_url": "", "name": "抖音选手", "hotkey": ""}
+        return {"platform": "douyin", "url": douyin_stream_match.group(0), "name": "抖音选手", "hotkey": ""}
     douyin_match = re.search(r'https?://(?:live\.douyin|www\.douyin|lv\.douyin|v\.douyin)\.com/\S+', clip)
     if douyin_match:
         url = douyin_match.group(0)
-        log("系统", f"[URL解析-步骤1] 检测到抖音直播间: {url}，将使用 Browser Source 直接打开")
-        return {"platform": "douyin", "douyin_url": "", "browser_url": url, "name": "抖音选手", "hotkey": ""}
+        log("系统", f"[URL解析-步骤1] 检测到抖音直播间: {url}")
+        return {"platform": "douyin", "url": url, "name": "抖音选手", "hotkey": ""}
     bili_match = re.search(r'live\.bilibili\.com/(\d+)', clip)
     if bili_match:
         rid = bili_match.group(1)
         clean_url = f"https://live.bilibili.com/{rid}"
-        return {"platform": "bilibili", "room_id": rid, "browser_url": clean_url, "name": f"B站{rid}", "hotkey": ""}
+        return {"platform": "bilibili", "room_id": rid, "url": clean_url, "name": f"B站{rid}", "hotkey": ""}
     twitch_match = re.search(r'twitch\.tv/([\w-]+)', clip)
     if twitch_match:
         ch = twitch_match.group(1)
-        return {"platform": "twitch", "twitch_url": f"https://www.twitch.tv/{ch}", "name": ch, "hotkey": ""}
+        return {"platform": "twitch", "url": f"https://www.twitch.tv/{ch}", "name": ch, "hotkey": ""}
     if clip.startswith("http"):
-        return {"platform": "custom_web", "browser_url": clip, "name": "自定义网页", "hotkey": ""}
+        return {"platform": "custom_web", "url": clip, "name": "自定义网页", "hotkey": ""}
     return None
 
 def get_next_view_label(players):
@@ -786,31 +783,23 @@ class PlayerDialog:
             name = prefill.get("name", "")
             plat = prefill.get("platform", "bilibili")
             room_id = prefill.get("room_id", "")
-            twitch_url = prefill.get("twitch_url", "")
-            douyin_url = prefill.get("douyin_url", "")
-            browser_url = prefill.get("browser_url", "")
+            url = prefill.get("url", "")
         elif current_player:
             name = current_player["name"]
             plat = current_player["platform"]
             room_id = current_player.get("room_id", "")
-            twitch_url = current_player.get("twitch_url", "") or current_player.get("channel", "")
-            douyin_url = current_player.get("douyin_url", "")
-            browser_url = current_player.get("browser_url", "")
+            url = current_player.get("url", "")
         else:
             name = ""
             plat = "bilibili"
             room_id = ""
-            twitch_url = ""
-            douyin_url = ""
-            browser_url = ""
+            url = ""
         self.name_var = tk.StringVar(value=name)
         self.plat_var = tk.StringVar(value=plat)
         self.hotkey_var = tk.StringVar(value=current_player["hotkey"] if current_player else "")
         self.room_var = tk.StringVar(value=room_id)
-        self.twitch_var = tk.StringVar(value=twitch_url)
-        self.douyin_var = tk.StringVar(value=douyin_url)
         self.qual_var = tk.StringVar(value=current_player.get("quality", "best") if current_player else "best")
-        self.url_var = tk.StringVar(value=browser_url)
+        self.url_var = tk.StringVar(value=url)
         ctk.CTkLabel(self.top, text="显示名称:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
         ctk.CTkEntry(self.top, textvariable=self.name_var, width=240).grid(row=0, column=1, padx=5, pady=5)
         ctk.CTkLabel(self.top, text="快捷键 (单字符):").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
@@ -837,10 +826,10 @@ class PlayerDialog:
             ctk.CTkEntry(self.frame, textvariable=self.url_var, width=400).grid(row=1, column=1, padx=5, pady=5)
         elif p == "twitch":
             ctk.CTkLabel(self.frame, text="频道名或完整URL:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-            ctk.CTkEntry(self.frame, textvariable=self.twitch_var, width=400).grid(row=0, column=1, padx=5, pady=5)
+            ctk.CTkEntry(self.frame, textvariable=self.url_var, width=400).grid(row=0, column=1, padx=5, pady=5)
         elif p == "douyin":
             ctk.CTkLabel(self.frame, text="直播间URL:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-            ctk.CTkEntry(self.frame, textvariable=self.douyin_var, width=400).grid(row=0, column=1, padx=5, pady=5)
+            ctk.CTkEntry(self.frame, textvariable=self.url_var, width=400).grid(row=0, column=1, padx=5, pady=5)
 
     def ok(self):
         hotkey = self.hotkey_var.get().strip()
@@ -861,10 +850,8 @@ class PlayerDialog:
             "hotkey": hotkey,
             "platform": self.plat_var.get(),
             "room_id": self.room_var.get().strip(),
-            "twitch_url": self.twitch_var.get().strip() if self.plat_var.get() == "twitch" else "",
-            "douyin_url": self.douyin_var.get().strip() if self.plat_var.get() == "douyin" else "",
-            "quality": self.qual_var.get(),
-            "browser_url": self.url_var.get().strip() if self.plat_var.get() in ("bilibili", "custom_web") else (self.douyin_var.get().strip() if self.plat_var.get() == "douyin" else "")
+            "url": self.url_var.get().strip(),
+            "quality": self.qual_var.get()
         }
         self.top.destroy()
 
@@ -1407,74 +1394,6 @@ class MonitorWindow:
             log("系统", f"[监视器-VLC重试] {name} 重试异常: {e}")
 
     # ==================== B站监视器管线 ====================
-    def _start_bilibili_pipeline(self, name, canvas):
-        """启动 B站 streamlink + ffmpeg → RTMP 管线 (在后台线程执行避免阻塞主线程)"""
-        log("系统", f"[监视器-B站-步骤1] 查找选手 {name} 的 URL")
-        player = next((p for p in self.app.active_players if p["name"] == name), None)
-        if not player:
-            log("系统", f"[监视器-B站-失败] 未找到活跃选手: {name}")
-            return
-        url = player.get("browser_url", "")
-        if not url:
-            log("系统", f"[监视器-B站-失败] {name} 没有 browser_url")
-            return
-
-        # 全局协调：检查是否已有其他 MonitorWindow 实例启动了同一选手的 B站管线
-        # 避免两个实例推送到相同 RTMP URL 导致 MediaMTX 冲突
-        if hasattr(self.app, '_bilibili_pipelines'):
-            with self.app._bilibili_lock:
-                if name in self.app._bilibili_pipelines:
-                    owner = self.app._bilibili_pipelines[name]
-                    if owner is not self and hasattr(owner, 'bilibili_procs') and name in owner.bilibili_procs:
-                        p1, p2 = owner.bilibili_procs[name]
-                        if p1.poll() is None:
-                            log("系统", f"[监视器-B站-跳过] {name} 管线已由其他实例运行，本实例仅启动 VLC")
-                            stream_name = player.get("stream_name", f"player{player['id']}")
-                            rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
-                            self.win.after(1000, self._start_vlc, name, canvas, rtmp_url)
-                            self.win.after(5000, self._retry_vlc, name, canvas, rtmp_url)
-                            return
-                # 注册本实例为管线拥有者
-                self.app._bilibili_pipelines[name] = self
-                log("系统", f"[监视器-B站-注册] {name} 管线由本实例管理")
-
-        stream_name = player.get("stream_name", f"player{player['id']}")
-        rtmp_url = f"rtmp://localhost:1935/live/{stream_name}"
-        log("系统", f"[监视器-B站-步骤2] URL={url}, RTMP={rtmp_url}")
-
-        # 在后台线程执行 MediaMTX 等待和管线启动，避免阻塞主线程
-        # 主线程阻塞会导致 refresh 无法完成，网格无法显示 (B站不显示黑底的根因)
-        def _do_pipeline():
-            # 确保 MediaMTX 运行（由主程序管理，此处仅检查）
-            global mediamtx_proc
-            if not mediamtx_proc or mediamtx_proc.poll() is not None:
-                log("系统", f"[监视器-B站-步骤3] MediaMTX 未运行，等待主程序启动")
-                wait_for_mediamtx()
-            else:
-                log("系统", f"[监视器-B站-步骤3] MediaMTX 已在运行")
-
-            try:
-                log("系统", f"[监视器-B站-步骤4] 启动 streamlink + ffmpeg 管线")
-                cmd1 = ["streamlink", url, "best", "--retry-max", "5", "--retry-streams", "5", "-O"]
-                cmd2 = [FFMPEG, "-re", "-i", "pipe:0", "-c", "copy", "-f", "flv", rtmp_url]
-                p1 = subprocess.Popen(cmd1, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
-                p2 = subprocess.Popen(cmd2, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
-                p1.stdout.close()
-                self.bilibili_procs[name] = (p1, p2)
-                log("系统", f"[监视器-B站-步骤5] 管线已启动: {name}")
-            except Exception as e:
-                log("系统", f"[监视器-B站-失败] 启动管线异常: {name} - {e}")
-                return
-
-            # 延迟启动 VLC（等待管线推流稳定，B站流需要约4-5秒）
-            if not self._closed:
-                self.win.after(6000, self._start_vlc, name, canvas, rtmp_url)
-                # 兜底重试：如果流未就绪导致 VLC 连接失败，10秒后重试
-                self.win.after(10000, self._retry_vlc, name, canvas, rtmp_url)
-                log("系统", f"[监视器-B站-步骤6] 安排 VLC 启动 (6s) + 兜底重试 (10s): {name}")
-
-        threading.Thread(target=_do_pipeline, daemon=True).start()
-
     def _stop_bilibili_pipeline(self, name):
         """停止 B站 streamlink 管线"""
         log("系统", f"[监视器-B站-停止] 停止管线: {name}")
@@ -2796,7 +2715,7 @@ class ManagerApp:
         self.refresh_ui()
 
     def open_player_url(self, player):
-        url = player.get("browser_url", "")
+        url = player.get("url", "")
         if url:
             webbrowser.open(url)
 
@@ -3214,7 +3133,7 @@ class ManagerApp:
                 used_names = set(p["name"] for p in self.players)
                 existing_urls = set()
                 for p in self.players:
-                    url = p.get("twitch_url") or p.get("douyin_url") or p.get("browser_url")
+                    url = p.get("url", "")
                     if url:
                         existing_urls.add(url)
 
@@ -3231,7 +3150,7 @@ class ManagerApp:
                         fail += 1
                         log("系统", f"批量导入第{idx+1}行无法识别: {line}")
                         continue
-                    url = prefill.get("twitch_url") or prefill.get("douyin_url") or prefill.get("browser_url")
+                    url = prefill.get("url", "")
                     if url and url in existing_urls:
                         skipped += 1
                         log("系统", f"批量导入第{idx+1}行重复，已跳过: {line}")
@@ -3265,10 +3184,8 @@ class ManagerApp:
                         "hotkey": hk,
                         "platform": prefill["platform"],
                         "room_id": prefill.get("room_id", ""),
-                        "twitch_url": prefill.get("twitch_url", ""),
-                        "douyin_url": prefill.get("douyin_url", ""),
+                        "url": prefill.get("url", ""),
                         "quality": prefill.get("quality", "best"),
-                        "browser_url": prefill.get("browser_url", ""),
                         "view_label": view_label,
                         "stream_name": f"player{pid}",
                         "obs_source_name": "",
