@@ -9,6 +9,20 @@ import ctypes
 from ctypes import wintypes
 from web_remote import start_web_server, get_local_ip
 
+# ==================== 基础路径配置 (必须在所有模块级代码之前定义) ====================
+# 动态获取 BASE_DIR: 支持 PyInstaller 打包和任意安装路径
+if getattr(sys, 'frozen', False):
+    # PyInstaller 打包后: exe 所在目录
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    # 开发模式: 脚本所在目录
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+MEDIAMTX_EXE = os.path.join(BASE_DIR, "mediamtx.exe")
+MEDIAMTX_YML = os.path.join(BASE_DIR, "mediamtx.yml")
+FFMPEG = os.path.join(BASE_DIR, "ffmpeg.exe")
+FFPROBE = os.path.join(BASE_DIR, "ffprobe.exe")
+
 # ==================== 双主题系统 ====================
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -561,18 +575,7 @@ class OBSController:
         return any(s["sceneName"] == name for s in scenes)
 
 # ==================== 基础配置 ====================
-# 动态获取 BASE_DIR: 支持 PyInstaller 打包和任意安装路径
-if getattr(sys, 'frozen', False):
-    # PyInstaller 打包后: exe 所在目录
-    BASE_DIR = os.path.dirname(sys.executable)
-else:
-    # 开发模式: 脚本所在目录
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
-MEDIAMTX_EXE = os.path.join(BASE_DIR, "mediamtx.exe")
-MEDIAMTX_YML = os.path.join(BASE_DIR, "mediamtx.yml")
-FFMPEG = os.path.join(BASE_DIR, "ffmpeg.exe")
-FFPROBE = os.path.join(BASE_DIR, "ffprobe.exe")
+# 注意: BASE_DIR 及路径常量已在文件顶部定义,此处仅保留运行时变量
 mediamtx_proc = None
 AUTO_DETECT_INTERVAL = 120
 DEDICATED_SCENE = "多视角切换"
