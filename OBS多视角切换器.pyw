@@ -12,14 +12,22 @@ from web_remote import start_web_server, get_local_ip
 # ==================== 基础路径配置 (必须在所有模块级代码之前定义) ====================
 # 动态获取 BASE_DIR: 支持 PyInstaller 打包和任意安装路径
 if getattr(sys, 'frozen', False):
-    # PyInstaller 打包后: exe 所在目录
     BASE_DIR = os.path.dirname(sys.executable)
 else:
-    # 开发模式: 脚本所在目录
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+
+def get_user_data_dir():
+    appdata = os.environ.get('APPDATA', '')
+    if appdata:
+        return os.path.join(appdata, "OBS多视角切换器")
+    return os.path.join(BASE_DIR, "data")
+
+USER_DATA_DIR = get_user_data_dir()
+os.makedirs(USER_DATA_DIR, exist_ok=True)
+
+CONFIG_FILE = os.path.join(USER_DATA_DIR, "config.json")
 MEDIAMTX_EXE = os.path.join(BASE_DIR, "mediamtx.exe")
-MEDIAMTX_YML = os.path.join(BASE_DIR, "mediamtx.yml")
+MEDIAMTX_YML = os.path.join(USER_DATA_DIR, "mediamtx.yml")
 FFMPEG = os.path.join(BASE_DIR, "ffmpeg.exe")
 FFPROBE = os.path.join(BASE_DIR, "ffprobe.exe")
 
@@ -200,7 +208,7 @@ except Exception:
     pass
 
 # ==================== 每次启动清空日志 ====================
-LOG_FILE = os.path.join(BASE_DIR, "debug.log")
+LOG_FILE = os.path.join(USER_DATA_DIR, "debug.log")
 try:
     open(LOG_FILE, "w").close()
 except:
@@ -775,7 +783,7 @@ def start_mediamtx():
         except:
             pass
     time.sleep(0.5)
-    yml_path = os.path.join(BASE_DIR, "mediamtx.yml")
+    yml_path = os.path.join(USER_DATA_DIR, "mediamtx.yml")
     # 始终生成全量路径 (player1-50)，覆盖所有可能的选手 ID
     paths = {}
     for i in range(1, 51):
@@ -786,7 +794,7 @@ def start_mediamtx():
     with open(yml_path, "w", encoding="utf-8") as f:
         f.write(yml)
     log("系统", "[MediaMTX-启动] 已生成 YML 配置 (player1-50)")
-    proc = subprocess.Popen([MEDIAMTX_EXE], cwd=BASE_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+    proc = subprocess.Popen([MEDIAMTX_EXE, yml_path], cwd=BASE_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
     mediamtx_proc = proc
     read_stream_output(proc, "[MediaMTX] ", "MediaMTX")
 
@@ -3051,7 +3059,7 @@ class ManagerApp:
         log("系统", f"sync_player 完成: {player['name']} -> {desired} ({'VLC源' if plat == 'twitch' else '浏览器源'})")
 
     def _cleanup_edge_profiles(self):
-        profiles_dir = os.path.join(BASE_DIR, "edge_profiles")
+        profiles_dir = os.path.join(USER_DATA_DIR, "edge_profiles")
         if not os.path.isdir(profiles_dir):
             return
         current_ids = {str(p["id"]) for p in self.players}

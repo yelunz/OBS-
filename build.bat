@@ -19,8 +19,6 @@ py -m PyInstaller --noconfirm --clean --windowed ^
   --add-data "app_icon.ico;." ^
   --add-data "templates;templates" ^
   --add-data "mediamtx.exe;." ^
-  --add-data "mediamtx.yml;." ^
-  --add-data "config.json;." ^
   --hidden-import "vlc" ^
   --hidden-import "PIL" ^
   --hidden-import "PIL.Image" ^

@@ -3,8 +3,20 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='repla
 from pynput import keyboard
 from obswebsocket import obsws, requests
 
-BASE_DIR = r"C:\myobs"
-CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def get_user_data_dir():
+    appdata = os.environ.get('APPDATA', '')
+    if appdata:
+        return os.path.join(appdata, "OBS多视角切换器")
+    return os.path.join(BASE_DIR, "data")
+
+USER_DATA_DIR = get_user_data_dir()
+os.makedirs(USER_DATA_DIR, exist_ok=True)
+CONFIG_FILE = os.path.join(USER_DATA_DIR, "config.json")
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)

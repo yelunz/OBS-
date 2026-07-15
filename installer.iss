@@ -47,10 +47,8 @@ Source: "dist\OBS多视角切换器\OBS多视角切换器.exe"; DestDir: "{app}"
 Source: "dist\OBS多视角切换器\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; 配置文件和媒体工具 (放根目录, 用户可修改)
 Source: "mediamtx.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "mediamtx.yml"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
 Source: "ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "ffprobe.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "config.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
 Source: "app_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; VLC 静默安装包 (安装时检测,未装则静默安装)
 Source: "vlc-setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall nocompression
@@ -73,9 +71,9 @@ Filename: "{tmp}\vlc-setup.exe"; Parameters: "/S"; StatusMsg: "正在安装 VLC 
 ; 启动主程序
 Filename: "{app}\{#MyAppExeName}"; Description: "立即启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
-; 卸载时删除配置 (询问)
+; 卸载时删除用户数据 (APPDATA 中的配置/日志/mediamtx.yml)
 [UninstallDelete]
-Type: files; Name: "{app}\config.json"
+Type: filesandordirs; Name: "{userappdata}\OBS多视角切换器"
 
 [Code]
 // 检测系统是否已安装 VLC (通过注册表)
