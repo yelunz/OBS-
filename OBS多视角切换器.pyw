@@ -8,6 +8,7 @@ from pynput import mouse, keyboard
 import ctypes
 from ctypes import wintypes
 from web_remote import start_web_server, get_local_ip
+from switcher import SwitcherService
 
 # ==================== 基础路径配置 (必须在所有模块级代码之前定义) ====================
 # 动态获取 BASE_DIR: 支持 PyInstaller 打包和任意安装路径
@@ -805,21 +806,21 @@ def stop_mediamtx():
         mediamtx_proc = None
 
 def start_switcher():
+    """启动切换器服务 (线程模式, 替代原 subprocess.Popen 方式)
+
+    原方式在 PyInstaller 打包后会导致 sys.executable (主程序exe) 被当作
+    python 解释器执行 switcher.py, 实际上再次启动了主UI, 形成无限循环。
+    现改为直接实例化 SwitcherService 在主进程内以线程运行。
+    """
     try:
-        proc = subprocess.Popen(
-            [sys.executable, os.path.join(BASE_DIR, "switcher.py")],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            cwd=BASE_DIR,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-        read_stream_output(proc, "[切换器] ", "Switcher")
-        time.sleep(1)
-        if proc.poll() is not None:
-            log("系统", "警告: switcher.py 进程启动后立即退出")
-        return proc
+        svc = SwitcherService(log_callback=lambda msg: log("系统", f"[切换器] {msg}"))
+        if svc.start():
+            return svc
+        else:
+            log("系统", "警告: switcher 服务启动失败 (OBS 连接失败)")
+            return None
     except Exception as e:
-        log("系统", f"启动 switcher.py 失败: {e}")
+        log("系统", f"启动 switcher 服务失败: {e}")
         return None
 
 def get_all_stream_statuses(players):
@@ -3400,7 +3401,11 @@ class ManagerApp:
 
     def all_stop(self):
         if self.switcher_proc:
-            self.switcher_proc.terminate()
+            try:
+                self.switcher_proc.stop()
+            except Exception:
+                pass
+            self.switcher_proc = None
         for p in self.active_players:
             self.stop_process(p)
         stop_mediamtx()
@@ -3426,7 +3431,11 @@ class ManagerApp:
 
     def restart_services(self):
         if self.switcher_proc:
-            self.switcher_proc.terminate()
+            try:
+                self.switcher_proc.stop()
+            except Exception:
+                pass
+            self.switcher_proc = None
         stop_mediamtx()
         start_mediamtx()
         self.switcher_proc = start_switcher()

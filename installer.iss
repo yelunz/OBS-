@@ -76,6 +76,9 @@ Filename: "{app}\{#MyAppExeName}"; Description: "立即启动 {#MyAppName}"; Fla
 Type: filesandordirs; Name: "{userappdata}\OBS多视角切换器"
 
 [Code]
+const
+  WM_CLOSE = $0010;
+
 // 检测系统是否已安装 VLC (通过注册表)
 // 检查 HKLM 64位和32位两个位置
 function NeedInstallVLC(): Boolean;
@@ -101,8 +104,68 @@ begin
   Result := True;
 end;
 
-// 卸载时询问是否保留配置
-function InitializeUninstall(): Boolean;
+// 检测并关闭正在运行的主程序 (覆盖安装时旧版本可能正在运行, 导致 exe 被锁定无法覆盖)
+// 返回 True 表示已关闭或未运行, 可以继续安装; False 表示用户取消
+function InitializeSetup(): Boolean;
+var
+  hWnd: HWND;
+  retryCount: Integer;
 begin
+  retryCount := 0;
+  while retryCount < 3 do begin
+    hWnd := FindWindowByWindowName('OBS多视角切换器');
+    if hWnd = 0 then begin
+      // 主窗口未找到, 可能未运行, 继续安装
+      Result := True;
+      Exit;
+    end;
+    // 询问用户是否关闭 (首次提示, 后续静默强制关闭)
+    if retryCount = 0 then begin
+      if MsgBox('检测到 OBS多视角切换器 正在运行, 需要关闭它才能继续安装。是否立即关闭?',
+                 mbConfirmation, MB_YESNO) = IDNO then begin
+        Result := False;
+        Exit;
+      end;
+    end;
+    // 发送关闭消息
+    PostMessage(hWnd, WM_CLOSE, 0, 0);
+    // 等待进程退出
+    Sleep(1500);
+    // 再次检查是否仍在运行 (通过进程名)
+    if hWnd = FindWindowByWindowName('OBS多视角切换器') then begin
+      // 窗口仍在, 尝试用 taskkill 强制结束
+      Exec(ExpandConstant('{cmd}'), '/C taskkill /F /IM "{#MyAppExeName}"',
+           '', SW_HIDE, ewWaitUntilTerminated, retryCount);
+      Sleep(1000);
+    end;
+    // 最终检查
+    if FindWindowByWindowName('OBS多视角切换器') = 0 then begin
+      Result := True;
+      Exit;
+    end;
+    retryCount := retryCount + 1;
+  end;
+  // 3 次尝试后仍在运行, 报错退出
+  MsgBox('无法关闭正在运行的 OBS多视角切换器, 请手动关闭后重试。',
+         mbError, MB_OK);
+  Result := False;
+end;
+
+// 卸载前同样检测并关闭运行中的主程序
+function InitializeUninstall(): Boolean;
+var
+  hWnd: HWND;
+  resultCode: Integer;
+begin
+  hWnd := FindWindowByWindowName('OBS多视角切换器');
+  if hWnd <> 0 then begin
+    PostMessage(hWnd, WM_CLOSE, 0, 0);
+    Sleep(1500);
+    if FindWindowByWindowName('OBS多视角切换器') <> 0 then begin
+      Exec(ExpandConstant('{cmd}'), '/C taskkill /F /IM "{#MyAppExeName}"',
+           '', SW_HIDE, ewWaitUntilTerminated, resultCode);
+      Sleep(1000);
+    end;
+  end;
   Result := True;
 end;
