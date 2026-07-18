@@ -112,6 +112,10 @@ def api_activate():
             return jsonify({"error": f"选手 {name} 不存在"}), 404
         if player.get("active"):
             return jsonify({"error": f"选手 {name} 已在活跃池"}), 400
+
+        # 立即同步标记为活跃 (让后续 read 立即生效)
+        player["active"] = True
+        # 异步执行 OBS 源创建 + 推流启动
         _app_ref.submit_command(lambda: _app_ref.activate_player(player))
         return jsonify({"success": True, "activated": name})
     except Exception as e:
@@ -119,7 +123,7 @@ def api_activate():
 
 @flask_app.route('/api/deactivate', methods=['POST'])
 def api_deactivate():
-    """从活跃池移回仓库"""
+    """从活跃池移回仓库 (使用完整的 move_to_store 逻辑)"""
     if _app_ref is None:
         return jsonify({"error": "应用未初始化"}), 500
     try:
@@ -132,7 +136,15 @@ def api_deactivate():
             return jsonify({"error": f"选手 {name} 不存在"}), 404
         if not player.get("active"):
             return jsonify({"error": f"选手 {name} 已在仓库"}), 400
-        _app_ref.submit_command(lambda: _app_ref.deactivate_player(player))
+
+        # 立即同步标记为非活跃 (让后续 read 立即生效)
+        player["active"] = False
+        with _app_ref.data_lock:
+            if player in _app_ref.active_players:
+                _app_ref.active_players.remove(player)
+        # 异步执行 OBS 源删除 + 推流停止
+        # move_to_store 会: 停止推流 + 删除OBS源 + 保存配置 + 刷新UI
+        _app_ref.submit_command(lambda: _app_ref.move_to_store(player))
         return jsonify({"success": True, "deactivated": name})
     except Exception as e:
         return jsonify({"error": f"移回仓库失败: {e}"}), 500

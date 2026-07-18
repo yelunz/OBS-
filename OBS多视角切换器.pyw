@@ -1171,19 +1171,40 @@ class MonitorWindow:
 
     def _start_mouse_listener(self):
         """启动 pynput 全局鼠标钩子，通过坐标命中判定切换视角
-        这是老代码验证可工作的方案: pynput 是 OS 级全局钩子,
-        在 Tkinter 事件分发之前捕获点击, VLC 嵌入的 Win32 子窗口
-        无法拦截, 因此点击跳转始终可靠"""
+        只有点击位于监视器容器内且窗口为前景窗口时才响应，
+        避免其他窗口(如聊天窗口)上的点击误触视角切换"""
+        hwnd = None
+        try:
+            if self.embedded:
+                hwnd = self.app.root.winfo_id()
+            else:
+                hwnd = self.win.winfo_id()
+        except:
+            pass
+
         def on_click(x, y, button, pressed):
             if not pressed or button != mouse.Button.left:
                 return True
             if self._closed or not self.win or not self.win.winfo_exists():
                 return True
             try:
+                # 仅当窗口为前景窗口时才处理点击 (避免误触其他窗口上的点击)
+                if hwnd:
+                    try:
+                        foreground = ctypes.windll.user32.GetForegroundWindow()
+                        if hwnd != foreground:
+                            return True
+                    except:
+                        pass
                 cont_x = self.container.winfo_rootx()
                 cont_y = self.container.winfo_rooty()
+                cont_w = self.container.winfo_width()
+                cont_h = self.container.winfo_height()
                 rel_x = x - cont_x
                 rel_y = y - cont_y
+                # 点击不在容器范围内时忽略 (窗口拖动弹出时)
+                if rel_x < 0 or rel_y < 0 or rel_x > cont_w or rel_y > cont_h:
+                    return True
                 cols = self.columns
                 if cols <= 0:
                     return True
@@ -1201,7 +1222,7 @@ class MonitorWindow:
             return True
         self.mouse_listener = mouse.Listener(on_click=on_click)
         self.mouse_listener.start()
-        log("系统", "[监视器-鼠标钩子] pynput 全局钩子已启动")
+        log("系统", "[监视器-鼠标钩子] pynput 全局钩子已启动 (仅响应前景窗口点击)")
 
     def _on_resize(self, event):
         if self._closed:
@@ -2840,18 +2861,24 @@ class ManagerApp:
     def move_to_store(self, player):
         if not self.obs or not self.obs.connected:
             return
-        with self.data_lock:
-            if player not in self.active_players:
-                return
+        # 兼容手机 API 提前移除: 即使 player 已不在 active_players, 
+        # 只要 player["active"] 仍为 True 就继续执行 OBS 清理
+        if not player.get("active") and player.get("obs_source_name", "") == "":
+            return
         def do_move():
             if self.get_current_display_name() == player["name"]:
                 if player.get("obs_source_name"):
-                    self.obs.set_visibility(player["obs_source_name"], False)
-                    self.obs.set_mute(player["obs_source_name"], True)
-            # 浏览器源不需要额外静音，OBS 原生 mute 已处理
+                    try:
+                        self.obs.set_visibility(player["obs_source_name"], False)
+                        self.obs.set_mute(player["obs_source_name"], True)
+                    except:
+                        pass
             stop_stream(player)
             if player["obs_source_name"]:
-                self.obs.remove_source(player["obs_source_name"])
+                try:
+                    self.obs.remove_source(player["obs_source_name"])
+                except:
+                    pass
             with self.data_lock:
                 if player in self.active_players:
                     self.active_players.remove(player)
