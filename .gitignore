@@ -55,6 +55,8 @@ Win10_22H2_*.iso
 Win11_25H2_*.iso
 Win11_25H2_*/
 Win11_25H2_*.zip
+uup_win11_25h2/
+uup_win11_25h2.zip
 VirtualBox-*.exe
 Fido.ps1
 oscdimg.rar
