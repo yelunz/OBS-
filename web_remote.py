@@ -91,10 +91,51 @@ def api_switch():
             return jsonify({"error": f"选手 {name} 未激活"}), 400
         if not _app_ref.obs or not _app_ref.obs.connected:
             return jsonify({"error": "OBS 未连接，无法切换"}), 503
+        # switch_to 内部使用 root.after() 是线程安全的，可直接从 Flask 线程调用
         _app_ref.switch_to(player)
         return jsonify({"success": True, "switched_to": name})
     except Exception as e:
         return jsonify({"error": f"切换失败: {e}"}), 500
+
+@flask_app.route('/api/activate', methods=['POST'])
+def api_activate():
+    """从仓库激活选手到活跃池"""
+    if _app_ref is None:
+        return jsonify({"error": "应用未初始化"}), 500
+    try:
+        data = request.get_json()
+        if not data or 'name' not in data:
+            return jsonify({"error": "缺少 name 参数"}), 400
+        name = data['name']
+        player = _app_ref.find_player_in_any(name)
+        if not player:
+            return jsonify({"error": f"选手 {name} 不存在"}), 404
+        if player.get("active"):
+            return jsonify({"error": f"选手 {name} 已在活跃池"}), 400
+        _app_ref.submit_command(lambda: _app_ref.activate_player(player))
+        return jsonify({"success": True, "activated": name})
+    except Exception as e:
+        return jsonify({"error": f"激活失败: {e}"}), 500
+
+@flask_app.route('/api/deactivate', methods=['POST'])
+def api_deactivate():
+    """从活跃池移回仓库"""
+    if _app_ref is None:
+        return jsonify({"error": "应用未初始化"}), 500
+    try:
+        data = request.get_json()
+        if not data or 'name' not in data:
+            return jsonify({"error": "缺少 name 参数"}), 400
+        name = data['name']
+        player = _app_ref.find_player_in_any(name)
+        if not player:
+            return jsonify({"error": f"选手 {name} 不存在"}), 404
+        if not player.get("active"):
+            return jsonify({"error": f"选手 {name} 已在仓库"}), 400
+        _app_ref.submit_command(lambda: _app_ref.deactivate_player(player))
+        return jsonify({"success": True, "deactivated": name})
+    except Exception as e:
+        return jsonify({"error": f"移回仓库失败: {e}"}), 500
 
 # ==================== WebSocket 截图推送 ====================
 
@@ -102,7 +143,7 @@ _screenshot_thread = None
 _screenshot_running = False
 
 def screenshot_loop():
-    """截图推送循环 - 当前视角每2秒，其他选手每6秒"""
+    """截图推送循环 - 当前视角每1秒，其他选手每4秒，提高时效性"""
     global _screenshot_running
     tick = 0
     while _screenshot_running:
@@ -115,14 +156,15 @@ def screenshot_loop():
                     src_name = p.get("obs_source_name")
                     if not src_name:
                         continue
-                    # 当前视角每2秒截图；其他选手每6秒
+                    # 当前视角每1秒截图(画质60); 其他选手每4秒截图(画质50)
                     is_current = (cur_name == p["name"])
                     if is_current and tick % 1 != 0:
                         continue
-                    if not is_current and tick % 3 != 0:
+                    if not is_current and tick % 4 != 0:
                         continue
                     try:
-                        img_b64 = _app_ref.obs.get_source_screenshot(src_name, 480, 270, 50)
+                        quality = 60 if is_current else 50
+                        img_b64 = _app_ref.obs.get_source_screenshot(src_name, 480, 270, quality)
                         if img_b64:
                             # 确保是纯 base64 字符串（去掉 data:image 前缀）
                             if isinstance(img_b64, str) and img_b64.startswith("data:"):
@@ -144,7 +186,7 @@ def screenshot_loop():
         except Exception as e:
             print(f"[Web遥控-截图] 循环异常: {e}")
         tick += 1
-        time.sleep(2)  # 基础间隔2秒
+        time.sleep(1)  # 基础间隔1秒 (此前为2秒)
 
 def start_screenshot_push():
     global _screenshot_thread, _screenshot_running

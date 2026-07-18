@@ -30,11 +30,14 @@
         user-select: none;
         -webkit-user-select: none;
     }
-    /* ========== 顶部标题栏 ========== */
-    .header {
+    /* ========== 顶部粘性区域 ========== */
+    .sticky-top {
         position: sticky;
         top: 0;
         z-index: 100;
+    }
+    /* ========== 顶部标题栏 ========== */
+    .header {
         background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
         border-bottom: 1px solid var(--border);
         padding: 12px 16px;
@@ -75,6 +78,44 @@
         flex-shrink: 0;
     }
     .header-status .dot.connected { background: var(--success); }
+    /* ========== 标签栏 ========== */
+    .tab-bar {
+        display: flex;
+        background: #0F172A;
+        border-bottom: 1px solid var(--border);
+    }
+    .tab-btn {
+        flex: 1;
+        padding: 10px 16px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        cursor: pointer;
+        transition: color 0.2s, border-color 0.2s;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+        position: relative;
+    }
+    .tab-btn:active {
+        opacity: 0.7;
+    }
+    .tab-btn.active {
+        color: var(--brand);
+        border-bottom-color: var(--brand);
+    }
+    .tab-btn .tab-icon {
+        margin-right: 4px;
+    }
+    /* ========== 标签页内容 ========== */
+    .tab-content {
+        display: block;
+    }
+    .tab-content.hidden {
+        display: none;
+    }
     /* ========== 主内容区 ========== */
     .main {
         padding: 12px;
@@ -92,6 +133,7 @@
         .main { padding: 8px; }
         .header { padding: 10px 12px; }
         .header-title { font-size: 15px; }
+        .tab-btn { font-size: 13px; padding: 8px 12px; }
     }
     /* 平板横屏 3-4 列 */
     @media (min-width: 1024px) {
@@ -100,7 +142,7 @@
     @media (min-width: 1200px) {
         .grid { grid-template-columns: repeat(4, 1fr); }
     }
-    /* ========== 选手卡片 ========== */
+    /* ========== 选手卡片（活跃池） ========== */
     .card {
         background: var(--card-bg);
         border: 2px solid var(--border);
@@ -238,6 +280,89 @@
         color: var(--text-secondary);
         cursor: not-allowed;
     }
+    /* ========== 管理视图卡片 ========== */
+    .mgmt-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+    @media (min-width: 640px) {
+        .mgmt-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    }
+    @media (min-width: 1024px) {
+        .mgmt-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    .mgmt-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 12px 16px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        transition: border-color 0.2s;
+    }
+    .mgmt-card .mgmt-left {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+        flex: 1;
+    }
+    .mgmt-card .mgmt-name {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .mgmt-card .mgmt-tag-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .mgmt-card .mgmt-status-text {
+        font-size: 12px;
+        font-weight: 500;
+    }
+    .mgmt-card .mgmt-status-text.active {
+        color: var(--success);
+    }
+    .mgmt-card .mgmt-status-text.inactive {
+        color: var(--text-secondary);
+    }
+    .mgmt-card .mgmt-btn {
+        padding: 8px 14px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #fff;
+        background: var(--brand);
+        border: none;
+        border-radius: var(--btn-radius);
+        cursor: pointer;
+        transition: background 0.2s, transform 0.1s;
+        white-space: nowrap;
+        min-height: 36px;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+        flex-shrink: 0;
+    }
+    .mgmt-card .mgmt-btn:active {
+        transform: scale(0.97);
+    }
+    .mgmt-card .mgmt-btn.deactivate {
+        background: var(--warning);
+        color: #fff;
+    }
+    .mgmt-card .mgmt-btn.deactivate:active {
+        background: #D97706;
+    }
+    .mgmt-card .mgmt-btn.loading {
+        opacity: 0.5;
+        pointer-events: none;
+    }
     /* ========== 底部状态栏 ========== */
     .footer {
         position: sticky;
@@ -346,23 +471,43 @@
 <!-- 断连横幅 -->
 <div class="disconnect-banner" id="disconnectBanner">⚠ 连接已断开，正在自动重连...</div>
 
-<!-- 顶部标题栏 -->
-<div class="header">
-    <div class="header-title">📺 多视角<span>监控</span></div>
-    <div class="header-status">
-        <span class="dot" id="obsDot"></span>
-        <span id="obsLabel">OBS</span>
+<!-- 顶部粘性区（标题栏 + 标签栏） -->
+<div class="sticky-top">
+    <!-- 顶部标题栏 -->
+    <div class="header">
+        <div class="header-title">📺 多视角<span>监控</span></div>
+        <div class="header-status">
+            <span class="dot" id="obsDot"></span>
+            <span id="obsLabel">OBS</span>
+        </div>
+        <div class="header-ip" id="headerIp">--</div>
     </div>
-    <div class="header-ip" id="headerIp">--</div>
+    <!-- 标签栏 -->
+    <div class="tab-bar" id="tabBar">
+        <button class="tab-btn active" data-tab="dashboard">活跃池</button>
+        <button class="tab-btn" data-tab="management">管理</button>
+    </div>
 </div>
 
 <!-- 主内容区 -->
 <div class="main">
-    <div class="loading" id="loading"><div class="spinner"></div></div>
-    <div class="grid" id="grid" style="display:none;"></div>
-    <div class="empty-state" id="empty" style="display:none;">
-        <div class="icon">🎬</div>
-        <p>暂无选手数据<br>请在桌面端添加选手</p>
+    <!-- 活跃池标签页 -->
+    <div class="tab-content" id="tabDashboard">
+        <div class="loading" id="loading"><div class="spinner"></div></div>
+        <div class="grid" id="grid" style="display:none;"></div>
+        <div class="empty-state" id="emptyDashboard" style="display:none;">
+            <div class="icon">📡</div>
+            <p>暂无活跃推流</p>
+        </div>
+    </div>
+    <!-- 管理标签页 -->
+    <div class="tab-content hidden" id="tabManagement">
+        <div class="loading" id="mgmtLoading"><div class="spinner"></div></div>
+        <div class="mgmt-grid" id="mgmtGrid" style="display:none;"></div>
+        <div class="empty-state" id="emptyManagement" style="display:none;">
+            <div class="icon">📋</div>
+            <p>暂无选手数据<br>请在桌面端添加选手</p>
+        </div>
     </div>
 </div>
 
@@ -384,7 +529,10 @@
     // ========== DOM 引用 ==========
     const grid = document.getElementById('grid');
     const loading = document.getElementById('loading');
-    const empty = document.getElementById('empty');
+    const emptyDashboard = document.getElementById('emptyDashboard');
+    const mgmtGrid = document.getElementById('mgmtGrid');
+    const mgmtLoading = document.getElementById('mgmtLoading');
+    const emptyManagement = document.getElementById('emptyManagement');
     const toast = document.getElementById('toast');
     const headerIp = document.getElementById('headerIp');
     const obsDot = document.getElementById('obsDot');
@@ -392,10 +540,39 @@
     const footerObsDot = document.getElementById('footerObsDot');
     const footerObsText = document.getElementById('footerObsText');
     const footerCurrent = document.getElementById('footerCurrent');
+    const tabBar = document.getElementById('tabBar');
 
     let socket = null;
     let playerCards = {};
     let currentView = null;
+    let currentTab = 'dashboard';
+
+    // ========== 标签切换 ==========
+    tabBar.addEventListener('click', function(e) {
+        var btn = e.target.closest('.tab-btn');
+        if (!btn) return;
+        var tab = btn.dataset.tab;
+        if (tab === currentTab) return;
+        switchTab(tab);
+    });
+
+    function switchTab(tab) {
+        currentTab = tab;
+        // 更新标签按钮状态
+        var btns = tabBar.querySelectorAll('.tab-btn');
+        for (var i = 0; i < btns.length; i++) {
+            btns[i].classList.toggle('active', btns[i].dataset.tab === tab);
+        }
+        // 切换标签页内容
+        var dashboardPanel = document.getElementById('tabDashboard');
+        var managementPanel = document.getElementById('tabManagement');
+        dashboardPanel.classList.toggle('hidden', tab !== 'dashboard');
+        managementPanel.classList.toggle('hidden', tab !== 'management');
+        // 进入管理标签时加载数据
+        if (tab === 'management') {
+            loadManagementPlayers();
+        }
+    }
 
     // ========== Toast ==========
     let toastTimer = null;
@@ -418,7 +595,7 @@
         return 'custom';
     }
 
-    // ========== 创建/更新卡片 ==========
+    // ========== 创建/更新选手卡片（活跃池） ==========
     function createOrUpdateCard(player) {
         var card = playerCards[player.name];
         if (!card) {
@@ -498,8 +675,9 @@
         }
     }
 
-    // ========== 更新截图 ==========
+    // ========== 更新截图（仅活跃池） ==========
     function updateScreenshot(data) {
+        if (currentTab !== 'dashboard') return;
         var card = playerCards[data.name];
         if (!card) return;
         var img = card.querySelector('.img-wrap img');
@@ -583,7 +761,58 @@
         });
     }
 
-    // ========== 加载选手列表 ==========
+    // ========== 激活/移回仓库 ==========
+    function doActivate(name, btn) {
+        if (btn) btn.classList.add('loading');
+        fetch('/api/activate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                showToast('已推流: ' + data.activated, 'success');
+                // 刷新两个列表
+                loadPlayers();
+                loadManagementPlayers();
+            } else {
+                showToast(data.error || '操作失败', 'error');
+                if (btn) btn.classList.remove('loading');
+            }
+        })
+        .catch(function() {
+            showToast('网络错误', 'error');
+            if (btn) btn.classList.remove('loading');
+        });
+    }
+
+    function doDeactivate(name, btn) {
+        if (btn) btn.classList.add('loading');
+        fetch('/api/deactivate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                showToast('已移回仓库: ' + data.deactivated, 'success');
+                // 刷新两个列表
+                loadPlayers();
+                loadManagementPlayers();
+            } else {
+                showToast(data.error || '操作失败', 'error');
+                if (btn) btn.classList.remove('loading');
+            }
+        })
+        .catch(function() {
+            showToast('网络错误', 'error');
+            if (btn) btn.classList.remove('loading');
+        });
+    }
+
+    // ========== 加载活跃池选手列表（仅活跃选手） ==========
     function loadPlayers() {
         fetch('/api/players')
         .then(function(r) { return r.json(); })
@@ -592,19 +821,26 @@
                 showToast(data.error, 'error');
                 return;
             }
-            var players = data.players || [];
+            var allPlayers = data.players || [];
+            // 过滤出活跃选手
+            var activePlayers = [];
+            for (var i = 0; i < allPlayers.length; i++) {
+                if (allPlayers[i].active) {
+                    activePlayers.push(allPlayers[i]);
+                }
+            }
             loading.style.display = 'none';
-            if (players.length === 0) {
+            if (activePlayers.length === 0) {
                 grid.style.display = 'none';
-                empty.style.display = 'block';
+                emptyDashboard.style.display = 'block';
                 return;
             }
-            empty.style.display = 'none';
+            emptyDashboard.style.display = 'none';
             grid.style.display = 'grid';
-            // 移除已不存在的卡片
+            // 移除已不存在的活跃选手卡片
             var names = {};
-            for (var i = 0; i < players.length; i++) {
-                names[players[i].name] = true;
+            for (var i = 0; i < activePlayers.length; i++) {
+                names[activePlayers[i].name] = true;
             }
             for (var name in playerCards) {
                 if (!names[name]) {
@@ -613,14 +849,14 @@
                 }
             }
             // 创建/更新卡片
-            for (var i = 0; i < players.length; i++) {
-                createOrUpdateCard(players[i]);
+            for (var i = 0; i < activePlayers.length; i++) {
+                createOrUpdateCard(activePlayers[i]);
             }
             // 更新当前视角
-            for (var i = 0; i < players.length; i++) {
-                if (players[i].is_current) {
-                    currentView = players[i].name;
-                    footerCurrent.textContent = players[i].name;
+            for (var i = 0; i < activePlayers.length; i++) {
+                if (activePlayers[i].is_current) {
+                    currentView = activePlayers[i].name;
+                    footerCurrent.textContent = activePlayers[i].name;
                     break;
                 }
             }
@@ -628,6 +864,81 @@
         .catch(function() {
             loading.style.display = 'none';
             showToast('加载失败，请刷新', 'error');
+        });
+    }
+
+    // ========== 加载管理视图选手列表（全部选手） ==========
+    function loadManagementPlayers() {
+        mgmtLoading.style.display = 'flex';
+        fetch('/api/players')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            mgmtLoading.style.display = 'none';
+            if (data.error) {
+                showToast(data.error, 'error');
+                return;
+            }
+            var players = data.players || [];
+            if (players.length === 0) {
+                mgmtGrid.style.display = 'none';
+                emptyManagement.style.display = 'block';
+                return;
+            }
+            emptyManagement.style.display = 'none';
+            mgmtGrid.style.display = 'grid';
+            // 清空并重新渲染
+            mgmtGrid.innerHTML = '';
+            for (var i = 0; i < players.length; i++) {
+                var p = players[i];
+                var card = document.createElement('div');
+                card.className = 'mgmt-card';
+                card.dataset.name = p.name;
+
+                var left = document.createElement('div');
+                left.className = 'mgmt-left';
+
+                var nameEl = document.createElement('div');
+                nameEl.className = 'mgmt-name';
+                nameEl.textContent = p.name;
+
+                var tagRow = document.createElement('div');
+                tagRow.className = 'mgmt-tag-row';
+
+                var platformTag = document.createElement('span');
+                platformTag.className = 'platform-tag ' + platformClass(p.platform);
+                platformTag.textContent = p.platform;
+
+                var statusEl = document.createElement('span');
+                statusEl.className = 'mgmt-status-text ' + (p.active ? 'active' : 'inactive');
+                statusEl.textContent = p.active ? '● 活跃' : '○ 仓库';
+
+                tagRow.appendChild(platformTag);
+                tagRow.appendChild(statusEl);
+                left.appendChild(nameEl);
+                left.appendChild(tagRow);
+                card.appendChild(left);
+
+                var btn = document.createElement('button');
+                btn.className = 'mgmt-btn';
+                if (p.active) {
+                    btn.textContent = '移回仓库';
+                    btn.className += ' deactivate';
+                    btn.addEventListener('click', function(n) {
+                        return function() { doDeactivate(n, btn); };
+                    }(p.name));
+                } else {
+                    btn.textContent = '推流';
+                    btn.addEventListener('click', function(n) {
+                        return function() { doActivate(n, btn); };
+                    }(p.name));
+                }
+                card.appendChild(btn);
+                mgmtGrid.appendChild(card);
+            }
+        })
+        .catch(function() {
+            mgmtLoading.style.display = 'none';
+            showToast('加载管理列表失败', 'error');
         });
     }
 

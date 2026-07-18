@@ -2,7 +2,7 @@
 ; 使用方法: 安装 Inno Setup 后, 双击此文件或用 ISCC.exe 编译
 
 #define MyAppName "OBS多视角切换器"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.02"
 #define MyAppPublisher "创作者"
 #define MyAppExeName "OBS多视角切换器.exe"
 #define MyAppIconName "OBS多视角切换器.lnk"
@@ -20,7 +20,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=installer_output
-OutputBaseFilename=OBS多视角切换器_安装包_v1.0.0
+OutputBaseFilename=OBS多视角切换器_安装包_v1.02
 SetupIconFile=app_icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

@@ -53,8 +53,11 @@ if errorlevel 1 (
     exit /b 1
 )
 echo.
+for /f "usebackq delims=" %%v in ("version.txt") do set VER=%%v
 echo ============================================
 echo   全部完成!
-echo   安装包: installer_output\OBS多视角切换器_安装包_v1.0.0.exe
+echo   安装包: installer_output\OBS多视角切换器_安装包_v%VER%.exe
 echo ============================================
+echo.
+echo 提示: 推荐使用 py build_release.py 自动递增版本并打包
 pause

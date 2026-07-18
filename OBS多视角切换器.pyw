@@ -248,13 +248,26 @@ class OBSController:
         self.ws = None
         self.connected = False
         self.scene_name = None
+        # OBS 命令锁: 序列化所有 ws.call 调用, 解决多线程死锁
+        self._obs_lock = threading.Lock()
+        # 场景项缓存 (500ms TTL, 避免频繁 GetSceneItemList)
+        self._item_cache = None
+        self._item_cache_time = 0
+        # 当前视角名称缓存 (2s TTL, 避免主线程频繁同步调用)
+        self._current_name_cache = None
+        self._current_name_cache_time = 0
+
+    def _call_obs(self, request, timeout=30):
+        """线程安全地调用 OBS WebSocket 命令 (带锁序列化)"""
+        with self._obs_lock:
+            return self.ws.call(request)
 
     def connect(self):
         try:
             self.ws = obsws(self.host, self.port, self.password)
             self.ws.connect()
             self.connected = True
-            self.scene_name = self.ws.call(requests.GetCurrentProgramScene()).getSceneName()
+            self.scene_name = self._call_obs(requests.GetCurrentProgramScene()).getSceneName()
             log("系统", "OBS 连接成功")
             return True, ""
         except Exception as e:
@@ -278,7 +291,7 @@ class OBSController:
         if not self.ws or not self.connected:
             return False
         try:
-            self.ws.call(requests.GetVersion())
+            self._call_obs(requests.GetVersion())
             return True
         except:
             return False
@@ -289,7 +302,7 @@ class OBSController:
             self.connected = False
 
     def source_exists(self, name):
-        items = self.ws.call(requests.GetSceneItemList(sceneName=self.scene_name)).getSceneItems()
+        items = self._call_obs(requests.GetSceneItemList(sceneName=self.scene_name)).getSceneItems()
         return any(i["sourceName"] == name for i in items)
 
     def create_vlc(self, name, url):
@@ -303,7 +316,7 @@ class OBSController:
             "playback_behavior": "always_play"
         }
         try:
-            self.ws.call(requests.CreateInput(
+            self._call_obs(requests.CreateInput(
                 sceneName=self.scene_name,
                 inputName=name,
                 inputKind="vlc_source",
@@ -315,7 +328,7 @@ class OBSController:
             log("系统", f"CreateInput 失败: {name} - {e}")
             return
         try:
-            self.ws.call(requests.SetInputSettings(
+            self._call_obs(requests.SetInputSettings(
                 inputName=name,
                 inputSettings={"playback_behavior": "always_play"},
                 overlay=True
@@ -323,7 +336,7 @@ class OBSController:
             log("系统", f"SetInputSettings (always_play) 成功: {name}")
         except Exception as e:
             log("系统", f"SetInputSettings 失败: {name} - {e}")
-        self.ws.call(requests.SetInputMute(inputName=name, inputMuted=True))
+        self._call_obs(requests.SetInputMute(inputName=name, inputMuted=True))
         self.set_visibility(name, False)
         log("系统", f"VLC 源 {name} 已静音并隐藏")
         # 主动触发播放: always_play 有时不生效，用 TriggerMediaInputAction 兜底
@@ -332,17 +345,17 @@ class OBSController:
     def update_vlc_url(self, name, url):
         log("系统", f"刷新 OBS 源: {name} 新 URL: {url}")
         try:
-            cur = self.ws.call(requests.GetInputSettings(inputName=name)).getInputSettings()
+            cur = self._call_obs(requests.GetInputSettings(inputName=name)).getInputSettings()
             cur["playlist"] = [{"value": url, "hidden": False}]
             cur["playback_behavior"] = "always_play"
-            self.ws.call(requests.SetInputSettings(inputName=name, inputSettings=cur, overlay=True))
+            self._call_obs(requests.SetInputSettings(inputName=name, inputSettings=cur, overlay=True))
             log("系统", f"刷新成功: {name}")
         except Exception as e:
             log("系统", f"刷新失败: {name} - {e}")
 
     def restart_vlc(self, name):
         try:
-            self.ws.call(requests.TriggerMediaInputAction(
+            self._call_obs(requests.TriggerMediaInputAction(
                 inputName=name,
                 mediaAction="OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
             ))
@@ -361,14 +374,14 @@ class OBSController:
         }
         log("系统", f"创建窗口采集源: {name} 匹配窗口: '{window_title}'")
         try:
-            self.ws.call(requests.CreateInput(
+            self._call_obs(requests.CreateInput(
                 sceneName=self.scene_name,
                 inputName=name,
                 inputKind="window_capture",
                 inputSettings=settings,
                 sceneItemEnabled=False
             ))
-            self.ws.call(requests.SetInputAudioMonitorType(inputName=name, monitorType="none"))
+            self._call_obs(requests.SetInputAudioMonitorType(inputName=name, monitorType="none"))
             log("系统", f"窗口采集源创建成功: {name}")
         except Exception as e:
             log("系统", f"窗口采集源创建失败: {name} - {e}")
@@ -389,7 +402,7 @@ class OBSController:
             "shutdown": False,
         }
         try:
-            self.ws.call(requests.CreateInput(
+            self._call_obs(requests.CreateInput(
                 sceneName=self.scene_name,
                 inputName=name,
                 inputKind="browser_source",
@@ -406,7 +419,7 @@ class OBSController:
         (SetInputSettings会重置音频路由导致混音器控制消失+不静音, 改用PressInputPropertiesButton)
         """
         try:
-            self.ws.call(requests.PressInputPropertiesButton(
+            self._call_obs(requests.PressInputPropertiesButton(
                 inputName=name,
                 propertyName="refresh"
             ))
@@ -420,7 +433,7 @@ class OBSController:
         用于监视器实时预览，降低分辨率以提高帧率
         """
         try:
-            resp = self.ws.call(requests.GetSourceScreenshot(
+            resp = self._call_obs(requests.GetSourceScreenshot(
                 sourceName=name,
                 imageFormat="jpeg",
                 imageWidth=width,
@@ -437,23 +450,37 @@ class OBSController:
 
     def remove_source(self, name):
         try:
-            self.ws.call(requests.RemoveInput(inputName=name))
+            self._call_obs(requests.RemoveInput(inputName=name))
             log("系统", f"删除源成功: {name}")
         except Exception as e:
             log("系统", f"删除源失败: {name} - {e}")
 
-    def get_scene_item_map(self):
-        items = self.ws.call(requests.GetSceneItemList(sceneName=self.scene_name)).getSceneItems()
-        return {item["sourceName"]: {"id": item["sceneItemId"], "enabled": item["sceneItemEnabled"]} for item in items}
+    def get_scene_item_map(self, use_cache=True):
+        """获取场景项映射，支持500ms缓存避免频繁同步调用导致UI卡顿"""
+        now = time.time()
+        if use_cache and self._item_cache and (now - self._item_cache_time) < 0.5:
+            return self._item_cache
+        items = self._call_obs(requests.GetSceneItemList(sceneName=self.scene_name)).getSceneItems()
+        m = {item["sourceName"]: {"id": item["sceneItemId"], "enabled": item["sceneItemEnabled"]} for item in items}
+        self._item_cache = m
+        self._item_cache_time = now
+        return m
 
-    def get_visible(self, name):
-        m = self.get_scene_item_map()
+    def invalidate_cache(self):
+        """清除缓存，下次调用强制刷新"""
+        self._item_cache = None
+        self._item_cache_time = 0
+        self._current_name_cache = None
+        self._current_name_cache_time = 0
+
+    def get_visible(self, name, use_cache=True):
+        m = self.get_scene_item_map(use_cache=use_cache)
         return m.get(name, {}).get("enabled", False)
 
     def set_visibility(self, name, visible):
         m = self.get_scene_item_map()
         if name in m:
-            self.ws.call(requests.SetSceneItemEnabled(
+            self._call_obs(requests.SetSceneItemEnabled(
                 sceneName=self.scene_name,
                 sceneItemId=m[name]["id"],
                 sceneItemEnabled=visible
@@ -468,7 +495,7 @@ class OBSController:
             if name not in m:
                 return
             max_index = len(m) - 1
-            self.ws.call(requests.SetSceneItemIndex(
+            self._call_obs(requests.SetSceneItemIndex(
                 sceneName=self.scene_name,
                 sceneItemId=m[name]["id"],
                 sceneItemIndex=max_index
@@ -480,7 +507,7 @@ class OBSController:
     def trigger_media_play(self, name):
         """主动触发VLC源播放，解决 always_play 不生效导致画面不显示的问题"""
         try:
-            self.ws.call(requests.TriggerMediaInputAction(
+            self._call_obs(requests.TriggerMediaInputAction(
                 inputName=name,
                 mediaAction="OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PLAY"
             ))
@@ -491,7 +518,7 @@ class OBSController:
     def trigger_media_restart(self, name):
         """重启VLC源播放，用于刷新功能"""
         try:
-            self.ws.call(requests.TriggerMediaInputAction(
+            self._call_obs(requests.TriggerMediaInputAction(
                 inputName=name,
                 mediaAction="OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
             ))
@@ -502,14 +529,14 @@ class OBSController:
     def get_media_state(self, name):
         """获取VLC源播放状态，返回 None 或状态字符串"""
         try:
-            resp = self.ws.call(requests.GetMediaInputStatus(inputName=name))
+            resp = self._call_obs(requests.GetMediaInputStatus(inputName=name))
             return resp.getMediaState()
         except Exception:
             return None
 
     def set_mute(self, source_name, mute):
         try:
-            self.ws.call(requests.SetInputMute(inputName=source_name, inputMuted=mute))
+            self._call_obs(requests.SetInputMute(inputName=source_name, inputMuted=mute))
         except:
             pass
 
@@ -520,7 +547,7 @@ class OBSController:
         OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT: 监听并输出
         """
         try:
-            self.ws.call(requests.SetInputAudioMonitorType(
+            self._call_obs(requests.SetInputAudioMonitorType(
                 inputName=source_name,
                 monitorType=monitor_type
             ))
@@ -530,7 +557,7 @@ class OBSController:
     def get_volume(self, source_name):
         """获取源音量百分比 (0-100), 失败返回 None"""
         try:
-            resp = self.ws.call(requests.GetInputVolume(inputName=source_name))
+            resp = self._call_obs(requests.GetInputVolume(inputName=source_name))
             mul = resp.getInputVolumeMul()
             if mul is None:
                 return None
@@ -542,7 +569,7 @@ class OBSController:
         """设置源音量 (0-100 百分比)"""
         try:
             vol = max(0, min(100, int(volume_percent)))
-            self.ws.call(requests.SetInputVolume(
+            self._call_obs(requests.SetInputVolume(
                 inputName=source_name,
                 inputVolumeMul=vol / 100.0
             ))
@@ -551,7 +578,7 @@ class OBSController:
 
     def rename_source(self, old_name, new_name):
         try:
-            self.ws.call(requests.SetInputName(inputName=old_name, newInputName=new_name))
+            self._call_obs(requests.SetInputName(inputName=old_name, newInputName=new_name))
             log("系统", f"重命名源: {old_name} -> {new_name}")
             return True
         except Exception as e:
@@ -563,24 +590,24 @@ class OBSController:
 
     def create_scene(self, name):
         try:
-            self.ws.call(requests.CreateScene(sceneName=name))
+            self._call_obs(requests.CreateScene(sceneName=name))
             return True
         except:
             return False
 
     def remove_scene(self, name):
         try:
-            self.ws.call(requests.RemoveScene(sceneName=name))
+            self._call_obs(requests.RemoveScene(sceneName=name))
             return True
         except:
             return False
 
     def switch_scene(self, name):
-        self.ws.call(requests.SetCurrentProgramScene(sceneName=name))
+        self._call_obs(requests.SetCurrentProgramScene(sceneName=name))
         self.scene_name = name
 
     def scene_exists(self, name):
-        scenes = self.ws.call(requests.GetSceneList()).getScenes()
+        scenes = self._call_obs(requests.GetSceneList()).getScenes()
         return any(s["sceneName"] == name for s in scenes)
 
 # ==================== 基础配置 ====================
@@ -643,13 +670,40 @@ def read_stream_output(proc, prefix, player_name, obs_ref=None, stream_name=None
 
 def _stream_process_monitor(player, obs_ref):
     """监控推流进程：进程退出时自动重启
-    抖音流token约30分钟过期，属于正常现象，无限重试
-    其他平台重试3次后停止"""
+    - Twitch: 有限重试 (6次), 每次重试前先 quick check 确认流在线, 指数退避
+    - 抖音: 浏览器源无需推流监控 (token由浏览器自动刷新)
+    - B站: 浏览器源无需推流监控
+    """
     plat = player.get("platform")
-    max_retries = 999999 if plat == "douyin" else 3  # 抖音无限重试
+    # 浏览器源(B站/抖音等)无需推流监控, stream_process_monitor 不应被调用
+    if plat != "twitch":
+        log("系统", f"[推流监控] {player['name']} 平台={plat} 使用浏览器源, 无需推流监控")
+        return
+
+    max_retries = 6
     retry_count = 0
+    # 指数退避基数 (秒)
+    base_delay = 15
     while retry_count < max_retries:
-        time.sleep(15)
+        time.sleep(base_delay)
+        # 提前检测流是否在线，避免对离线流无效重试导致卡顿
+        try:
+            url = player.get("url", "")
+            if url:
+                online = check_source_quick(player)
+                if not online:
+                    retry_count += 1
+                    log("系统", f"[推流监控] {player['name']} 流已离线 (第{retry_count}/{max_retries}次检测)，跳过本次重启")
+                    if retry_count >= max_retries:
+                        break
+                    # 离线时指数退避: 15s -> 30s -> 60s -> 120s -> 240s
+                    base_delay = min(base_delay * 2, 240)
+                    log("系统", f"[推流监控] {player['name']} 离线, 下次检测间隔 {base_delay}s")
+                    continue
+        except Exception:
+            pass
+        # 在线检测通过, 重置退避间隔
+        base_delay = 15
         try:
             if not player.get("active"):
                 log("系统", f"[推流监控] {player['name']} 已关闭，停止监控")
@@ -668,16 +722,24 @@ def _stream_process_monitor(player, obs_ref):
             except psutil.NoSuchProcess:
                 pass
             retry_count += 1
-            log_label = f"第 {retry_count} 次" if plat != "douyin" else f"第 {retry_count} 次 (抖音token刷新)"
-            log("系统", f"[推流监控] {player['name']} 推流进程已退出，{log_label} 自动重启...")
+            log("系统", f"[推流监控] {player['name']} 推流进程已退出，第 {retry_count} 次自动重启...")
             player["stream_pid"] = None
+
+            # 重启前再次确认流在线
+            try:
+                if not check_source_quick(player):
+                    log("系统", f"[推流监控] {player['name']} 流仍离线, 跳过第 {retry_count} 次重启")
+                    continue
+            except Exception:
+                pass
+
             if not start_stream(player, obs_ref):
                 time.sleep(3)
                 if not start_stream(player, obs_ref):
                     log("系统", f"[推流监控] {player['name']} 第 {retry_count} 次重启失败")
             else:
                 log("系统", f"[推流监控] {player['name']} 第 {retry_count} 次重启成功")
-                retry_count = 0  # 重置计数器，允许无限次恢复
+                retry_count = 0  # 重置计数器, 允许无限次恢复
         except Exception as e:
             log("系统", f"[推流监控] {player['name']} 监控异常: {e}")
     log("系统", f"[推流监控] {player['name']} 连续 {max_retries} 次重启失败，停止监控")
@@ -770,6 +832,43 @@ def check_source(player):
     elif plat == "douyin":
         ok = check_douyin_source(url)
         player["source_ok"] = ok
+
+def check_source_quick(player):
+    """轻量级在线检测: 用于推流监控中的快速离线判断
+    - Twitch: 使用 streamlink --stream-url 快速检测 (约3-5秒)
+    - 浏览器源(B站/抖音): 直接返回 True (浏览器自动处理重连)
+    """
+    plat = player.get("platform")
+    url = player.get("url", "")
+    if not url:
+        return False
+    if plat == "twitch":
+        # Twitch: 快速 streamlink 检测 (--retry-max 0 不等待重试)
+        try:
+            p = subprocess.run(
+                f'streamlink "{url}" best --retry-max 0 --stream-url',
+                shell=True, capture_output=True, timeout=8
+            )
+            return p.returncode == 0 and p.stdout.strip() != b""
+        except subprocess.TimeoutExpired:
+            return False
+        except Exception:
+            return False
+    elif plat == "douyin":
+        # 抖音: 用 ffprobe 快速检测 RTMP 流是否在线
+        try:
+            p = subprocess.run(
+                f'"{FFPROBE}" -v quiet -print_format json -show_streams "{url}"',
+                shell=True, capture_output=True, timeout=8
+            )
+            import json as j
+            data = j.loads(p.stdout)
+            return bool(data.get("streams"))
+        except Exception:
+            return False
+    else:
+        # B站/自定义: 使用浏览器源, 由 OBS 浏览器自动处理重连
+        return True
 
 def start_mediamtx():
     global mediamtx_proc
@@ -1697,8 +1796,8 @@ class MonitorWindow:
                     self.win.after(0, _draw)
                 except:
                     break
-                # 截图帧率: 约 15fps (平衡性能与流畅度)
-                time.sleep(0.066)
+                # 截图帧率: 约 10fps (进一步降低 OBS WebSocket 压力)
+                time.sleep(0.1)
             except Exception as e:
                 fail_count += 1
                 if fail_count % 10 == 1:
@@ -2566,6 +2665,7 @@ class ManagerApp:
         # Filter bar
         filter_bar = ctk.CTkFrame(page, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=BORDER)
         filter_bar.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 4))
+        self._register_frame(filter_bar, "card")
 
         ctk.CTkLabel(filter_bar, text="日志", font=FONT_BODY_BOLD,
                      text_color=TEXT_PRIMARY).pack(side=tk.LEFT, padx=12, pady=8)
@@ -2580,6 +2680,13 @@ class ManagerApp:
         self.log_combo.pack(side=tk.LEFT, padx=(0, 8))
         self.log_combo.configure(command=lambda v: self._refresh_log_view())
         self.log_combo.set("系统")
+        # 注册 combo 主题色
+        self._register_theme(self.log_combo, "fg_color", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"])
+        self._register_theme(self.log_combo, "border_color", LIGHT_THEME["BORDER"], DARK_THEME["BORDER"])
+        self._register_theme(self.log_combo, "button_color", LIGHT_THEME["ACCENT"], DARK_THEME["ACCENT"])
+        self._register_theme(self.log_combo, "button_hover_color", LIGHT_THEME["ACCENT_HOVER"], DARK_THEME["ACCENT_HOVER"])
+        self._register_theme(self.log_combo, "dropdown_fg_color", LIGHT_THEME["CARD_BG"], DARK_THEME["CARD_BG"])
+        self._register_theme(self.log_combo, "dropdown_text_color", LIGHT_THEME["TEXT_PRIMARY"], DARK_THEME["TEXT_PRIMARY"])
 
         ctk.CTkCheckBox(filter_bar, text="自动检测", variable=self.auto_detect,
                         font=FONT_SMALL, text_color=TEXT_SECONDARY,
@@ -2596,6 +2703,9 @@ class ManagerApp:
                                        border_width=0, wrap="word")
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         self.log_text.configure(state="disabled")
+        # 注册日志文本框主题色
+        self._register_theme(self.log_text, "text_color", LIGHT_THEME["TEXT_PRIMARY"], DARK_THEME["TEXT_PRIMARY"])
+        self._register_theme(self.log_text, "fg_color", LIGHT_THEME["CARD_BG"], DARK_THEME["CARD_BG"])
 
         return page
 
@@ -2945,6 +3055,8 @@ class ManagerApp:
             self.obs.set_mute(src_name, False)
             # 当前源: 监听并输出 (在混音器中显示完整控制)
             self.obs.set_monitor_type(src_name, "OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT")
+            # 清除缓存，使 UI 下次读取时获取最新场景状态
+            self.obs.invalidate_cache()
 
             # 3. 将当前源置顶 (覆盖其他可见的浏览器源)
             self.obs.bring_to_front(src_name)
@@ -3014,12 +3126,20 @@ class ManagerApp:
                 return p
         return None
 
-    def get_current_display_name(self):
+    def get_current_display_name(self, use_cache=True):
+        """获取当前显示的视角名称，支持2s缓存避免主线程频繁同步调用"""
         if not self.obs or not self.obs.connected:
             return None
+        now = time.time()
+        if use_cache and self.obs._current_name_cache and (now - self.obs._current_name_cache_time) < 2.0:
+            return self.obs._current_name_cache
         for p in self.active_players:
-            if p.get("obs_source_name") and self.obs.get_visible(p["obs_source_name"]):
+            if p.get("obs_source_name") and self.obs.get_visible(p["obs_source_name"], use_cache=use_cache):
+                self.obs._current_name_cache = p["name"]
+                self.obs._current_name_cache_time = now
                 return p["name"]
+        self.obs._current_name_cache = None
+        self.obs._current_name_cache_time = now
         return None
 
     def sync_player(self, player):
@@ -3462,7 +3582,7 @@ class ManagerApp:
         # 创建独立弹出窗口 (不影响嵌入监视器)
         self.popup_monitor = MonitorWindow(self)
 
-    def _register_frame(self, widget, role="card"):
+    def _register_frame(self, widget, role="card", register_border=True):
         """注册 CTkFrame 的主题色"""
         if role == "card":
             self._register_theme(widget, "fg_color", LIGHT_THEME["CARD_BG"], DARK_THEME["CARD_BG"])
@@ -3470,6 +3590,8 @@ class ManagerApp:
             self._register_theme(widget, "fg_color", LIGHT_THEME["ELEVATED_BG"], DARK_THEME["ELEVATED_BG"])
         elif role == "sidebar":
             self._register_theme(widget, "fg_color", LIGHT_THEME["SIDEBAR_BG"], DARK_THEME["SIDEBAR_BG"])
+        if register_border:
+            self._register_theme(widget, "border_color", LIGHT_THEME["BORDER"], DARK_THEME["BORDER"])
 
     def _register_label(self, widget):
         """注册 CTkLabel 的文字色"""
@@ -3499,12 +3621,39 @@ class ManagerApp:
                 widget.configure(**{attr: val})
             except Exception:
                 pass
+        # 递归更新所有 CTkLabel 的文字色 (customtkinter 不会自动更新已有标签)
+        try:
+            self._update_ctklabel_colors(self.root)
+        except Exception:
+            pass
         # 更新监视器窗口 (嵌入和独立弹出窗口都更新)
         if self.monitor_window:
             self.monitor_window.apply_theme()
         if self.popup_monitor:
             self.popup_monitor.apply_theme()
         self.set_status(f"已切换为{'浅色' if _current_theme == 'light' else '暗色'}模式")
+
+    def _update_ctklabel_colors(self, parent):
+        """递归更新所有 CTkLabel 的文字色"""
+        theme = "light" if _current_theme == "light" else "dark"
+        tc = LIGHT_THEME["TEXT_PRIMARY"] if theme == "light" else DARK_THEME["TEXT_PRIMARY"]
+        for child in parent.winfo_children():
+            if isinstance(child, ctk.CTkLabel):
+                try:
+                    child.configure(text_color=tc)
+                except Exception:
+                    pass
+            # 也更新 CTkCheckBox 的文字色
+            elif isinstance(child, ctk.CTkCheckBox):
+                try:
+                    child.configure(text_color=LIGHT_THEME["TEXT_SECONDARY"] if theme == "light" else DARK_THEME["TEXT_SECONDARY"])
+                except Exception:
+                    pass
+            # 递归子控件
+            try:
+                self._update_ctklabel_colors(child)
+            except Exception:
+                pass
 
     def _copy_web_ip(self):
         """复制手机遥控地址到剪贴板"""
