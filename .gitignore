@@ -49,3 +49,12 @@ edge_profiles/
 ffmpeg.exe
 ffprobe.exe
 vlc-setup.exe
+
+# VirtualBox ISOs / 工具 (测试环境用, 不提交)
+Win10_22H2_*.iso
+Win11_25H2_*.iso
+Win11_25H2_*/
+Win11_25H2_*.zip
+VirtualBox-*.exe
+Fido.ps1
+oscdimg.rar
